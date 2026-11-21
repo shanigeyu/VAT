@@ -15,7 +15,7 @@ import generated_images
 import render_progress
 import task_control
 from shot_visuals import ILLUSTRATION_STYLES
-from store import new_project, uid
+from store import DEFAULT_VIDEO_RATIO, VIDEO_RATIOS, new_project, uid
 
 
 STAGES = {
@@ -29,6 +29,8 @@ STAGES = {
 STAGE_ORDER = (*STAGES, "done")
 # Older projects and first-time users inherit the corresponding workspace step.
 MODEL_PAGES = {"plan": "auto_video", "script": "script", "shots": "shots", "assets": "shots"}
+MIN_SECONDS = 15
+DURATION_PRESETS = (MIN_SECONDS, *script_timing.PRESETS)
 
 
 @dataclass(frozen=True)
@@ -45,37 +47,50 @@ def duration_seconds(value):
     plain = re.fullmatch(r"([0-9]+)\s*(?:秒|s)?", value, re.I)
     clock = re.fullmatch(r"([0-9]+)[:：]([0-5][0-9])", value)
     minutes = re.fullmatch(r"([0-9]+)\s*分[钟鐘]?\s*(?:([0-5]?[0-9])\s*秒)?", value)
-    if plain and int(plain[1]) > 0:
-        return int(plain[1])
     match = clock or minutes
-    if match:
+    total = 0
+    if plain:
+        total = int(plain[1])
+    elif match:
         total = int(match[1]) * 60 + int(match[2] or 0)
-        if total > 0:
-            return total
-    raise ValueError("请输入大于零的时长，例如 45 秒、1:30 或 2 分钟。")
+    if total >= MIN_SECONDS:
+        return total
+    raise ValueError(f"请输入至少 {MIN_SECONDS} 秒的时长，例如 15 秒、1:30 或 2 分钟。")
 
 
-def new_job(topic, duration, style, *, direction=""):
+def new_job(topic, duration, style, *, direction="", visual_tier=planning.DEFAULT_VISUAL_TIER,
+            orientation=DEFAULT_VIDEO_RATIO, asset_reference=planning.DEFAULT_ASSET_REFERENCE):
+    if orientation not in VIDEO_RATIOS:
+        raise ValueError("请选择有效的画幅比例。")
     request = {"topic": topic.strip(), "seconds": duration_seconds(duration), "style": style.strip()}
+    request["visual_tier"] = planning.visual_tier_key(visual_tier)
+    request["asset_reference"] = planning.asset_reference_key(asset_reference)
     if direction.strip():
         request["direction"] = direction.strip()
     title = " ".join(request["topic"].split())[:48] or "一键自动制作"
     project = new_project(title)
+    project["orientation"] = orientation
     project["auto_video"] = {"request": request, "next_stage": "plan", "plan": None, "elapsed_seconds": 0}
     return project
 
 
-def make_plan(prefs, key, request, asset_count):
+def make_plan(prefs, key, request, asset_count, *, orientation=DEFAULT_VIDEO_RATIO):
     brief = (
-        "策划一条可合成的中文竖屏视频。优先满足用户的选题、时长和创作意图，留空的部分由你创作。"
+        "按给定画幅策划一条可合成的中文视频。优先满足用户的选题、时长和创作意图，留空的部分由你创作。"
+        f"如果用户未指定时长，目标成片至少 {MIN_SECONDS} 秒。"
         "可采用故事、演示、视觉隐喻或其他适合内容的形式。自定结构、构图、色彩和运动语言。"
-        "下游能组合已有素材、绘制原创图形并制作逐帧动效。库中没有的场景也可以设计。"
+        "叙事内容要用画面演出来，不能把旁白做成文字卡来替代。"
         "在 angle 里交代主旨、叙事和美术方向，给下游留下创作空间。估算模型调用、配音和渲染的总用时。"
         '只返回 JSON 对象 {"title":"标题","angle":"讲述角度与要点","seconds":40,'
         '"style":"自由描述风格","estimate":[预计最少秒数,预计最多秒数]}。'
     )
     data = {"用户选题": request["topic"], "预期成片秒数": request["seconds"], "主题风格": request["style"],
-            "可用本机素材数量": asset_count}
+            "画幅": orientation, "可用本机素材数量": asset_count}
+    tier = planning.VISUAL_TIERS[planning.visual_tier_key(request.get("visual_tier"))]
+    reference = planning.asset_reference_key(request.get("asset_reference"))
+    data["动效提示词档位"] = tier.label
+    data["素材库参考程度"] = planning.ASSET_REFERENCES[reference].label
+    brief += "视觉制作方向：" + tier.prompt + planning.asset_reference_prompt(reference)
     if request.get("direction"):
         data["用户创作要求"] = request["direction"]
     started = time.monotonic()
@@ -99,6 +114,8 @@ def make_plan(prefs, key, request, asset_count):
     palette = style if style in ILLUSTRATION_STYLES else clean("palette")
     if not title or not angle or not style or type(seconds) is not int or seconds < 1:
         raise ValueError("制作方案缺少选题、讲述角度、主题风格或目标时长。")
+    if request["seconds"] is None:
+        seconds = max(MIN_SECONDS, seconds)
     if (not isinstance(estimate, list) or len(estimate) != 2
             or any(type(value) is not int for value in estimate) or not 0 < estimate[0] < estimate[1]):
         estimate = [max(30, seconds), max(90, seconds*4)]
@@ -162,7 +179,7 @@ def _run_stages(store, project, engine, voice_profile, report):
             plan = state["plan"]
             if stage == "plan":
                 prefs, key = model("plan")
-                plan = make_plan(prefs, key, request, len(catalog))
+                plan = make_plan(prefs, key, request, len(catalog), orientation=project["orientation"])
                 notes = "\n".join(dict.fromkeys(filter(None, (request["topic"], plan["angle"], request.get("direction")))))
                 topic = {"id": uid(), "source": "其他", "title": plan["title"], "url": "", "notes": notes}
                 project.update(title=plan["title"], topics=[topic], topic_id=topic["id"],
@@ -177,9 +194,13 @@ def _run_stages(store, project, engine, voice_profile, report):
                 project.update(draft=script, approved=script)
             elif stage == "shots":
                 prefs, key = model("shots")
+                tier = planning.VISUAL_TIERS[planning.visual_tier_key(request.get("visual_tier"))]
+                reference_prompt = planning.asset_reference_prompt(request.get("asset_reference"))
                 shots = providers.storyboard(prefs, key, project["approved"], catalog,
                                              target_seconds=project["target_seconds"], video_style=plan["style"],
-                                             direction="\n".join(filter(None, (plan["angle"], request.get("direction")))))
+                                             direction="\n".join(filter(None, (plan["angle"], request.get("direction")))),
+                                             visual_prompt=tier.prompt, orientation=project["orientation"],
+                                             reference_prompt=reference_prompt)
                 sections = []
                 for shot in shots:
                     title = shot.pop("section", "") or (sections[-1]["title"] if sections else plan["title"])

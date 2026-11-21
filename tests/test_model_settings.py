@@ -4,11 +4,13 @@ import sqlite3
 import unittest
 from contextlib import closing
 from pathlib import Path
+from subprocess import CompletedProcess, TimeoutExpired
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 import providers
 import codex_harness
+import task_control
 from api_profiles import ANTHROPIC, GEMINI, OPENAI, RESPONSES, parse_profile
 from step_models import PREF_PREFIX, engine_name
 from store import Store
@@ -261,7 +263,7 @@ class ModelSettingsTests(unittest.TestCase):
     def test_dsh_override_preserves_provider_and_reasoning(self):
         overlays = []
 
-        def dsh_stdout(path, args, cwd, prompt=None, timeout=180):
+        def dsh_stdout(path, args, cwd, prompt=None, timeout=None):
             if args == ["--dump-config"]:
                 return PROFILE
             self.assertEqual(args, ["--patch", "vat-model.json", "-"])
@@ -286,3 +288,37 @@ class ModelSettingsTests(unittest.TestCase):
 
         command.assert_called_once()
         self.assertEqual(command.call_args.args[1], ["-"])
+
+    def test_dsh_generation_has_no_wall_clock_limit(self):
+        elapsed = 0
+
+        def communicate(payload, timeout):
+            nonlocal elapsed
+            if payload is not None:
+                elapsed = 181
+                raise TimeoutExpired("dsh", timeout)
+            return b"OK", b""
+
+        with (patch("task_control.process") as launch,
+              patch("task_control.time.monotonic", side_effect=lambda: elapsed),
+              patch("providers.harness_path", return_value="dsh"),
+              task_control.running(task_control.JobControl())):
+            child = launch.return_value.__enter__.return_value
+            child.communicate.side_effect = communicate
+            child.returncode = 0
+            prefs = {"engine": "DSH", "harness": "dsh"}
+            self.assertEqual(providers.generate(prefs, "", "选材与原创动效", {}), "OK")
+
+        self.assertEqual(child.communicate.call_count, 2)
+
+    def test_dsh_config_probe_still_fails_fast(self):
+        calls = []
+
+        def run_process(args, **kwargs):
+            calls.append(kwargs)
+            return CompletedProcess(args, 0, PROFILE.encode("utf-8"), b"")
+
+        with patch("task_control.run_process", side_effect=run_process):
+            self.assertTrue(providers.dsh_configuration("dsh", "."))
+
+        self.assertEqual(calls[0]["timeout"], 20)

@@ -154,7 +154,14 @@ def harness_path(saved=""):
     return ""
 
 
-def dsh_stdout(path, args, cwd, prompt=None, timeout=180):
+def dsh_stdout(path, args, cwd, prompt=None, timeout=None):
+    """Run DSH headless and return its stdout.
+
+    Generating a script, a shot list or a selection can take as long as the model
+    needs, so a generation call has no wall-clock limit: it ends when DSH returns
+    or when the user stops the job. Only the short configuration probe passes a
+    timeout, because it must fail fast when the DSH install is broken.
+    """
     if not path:
         raise ValueError("请在设置的模型页面选择当前系统的 DSH 可执行文件。")
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -339,15 +346,21 @@ def rewrite(prefs, key, topic, target_seconds=None, current_draft="", *, video_s
     return generate(prefs, key, brief, data)
 
 
-def storyboard(prefs, key, script, assets, sections=None, target_seconds=None, *, video_style="", direction=""):
+def storyboard(prefs, key, script, assets, sections=None, target_seconds=None, *, video_style="", direction="",
+               visual_prompt="", orientation="", reference_prompt=""):
     units = script_units(script)
     brief = ("把定稿按顺序拆成镜头。镜头可合并相邻句。每镜明确主体、动作和画面。结合可用素材名称给建议。"
              '只返回 JSON 数组，每项格式 {"end":2,"kind":"voice","visual":"具体画面"}。'
              "end 是该镜最后一句的一基序号，必须递增并覆盖最后一句。")
     if video_style:
         brief = ("按讲述节奏自行决定镜头数量、长短、段落和转场。可使用库外原创画面、视觉隐喻和动态叠层，"
-                 "把主体、构图和动作写成可执行的画面说明。返回 JSON 数组，每镜给 end（末句的一基序号）及 visual，"
+                 "素材只是参考。用实际动作和场景讲述，不要把台词抄成文字卡。把主体、构图和动作写成可执行的画面说明。"
+                 "返回 JSON 数组，每镜给 end（末句的一基序号）及 visual，"
                  "可用 section 写自定段落标题。end 须递增并覆盖定稿。全片使用合成旁白。")
+        if visual_prompt:
+            brief += "本期动效方向：" + visual_prompt
+        if reference_prompt:
+            brief += reference_prompt
     else:
         brief += "kind 只能为 voice 或 talk。需要真人出镜时用 talk，尽量让本期真人段总共约20至30秒，短稿量力而行。"
     sections=sections or []
@@ -355,6 +368,9 @@ def storyboard(prefs, key, script, assets, sections=None, target_seconds=None, *
         brief += "每一段单独编排，镜头不得跨段。段落 end 是该段末句。"
     data = {"定稿句子": dict(enumerate(units, 1)), "段落":sections, "个人风格": prefs["style"],
             "素材名称": [a["name"] for a in assets.values() if a.get("enabled",1)][:100]}
+    if orientation:
+        data["画幅"] = orientation
+        brief += "镜头构图要按给定画幅设计。"
     if video_style:
         data["本期主题风格"] = video_style
         if direction:

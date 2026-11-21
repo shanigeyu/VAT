@@ -64,23 +64,85 @@ class CreativeVideoTests(unittest.TestCase):
                 next(w for w in walk(dialog) if isinstance(w, tk.Button) and w.cget("text") == "保存").invoke()
             direction, = [w for w in walk(studio.body) if isinstance(w, tk.Text)]
             direction.insert("1.0", "用一镜到底的剪纸动画。")
+            selector = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox)
+                            and "导演级原创" in w.cget("values"))
+            self.assertEqual(selector.get(), "精制原创")
+            selector.set("导演级原创")
+            reference = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox)
+                             and "高度参考" in w.cget("values"))
+            self.assertEqual(reference.get(), "平衡参考")
+            reference.set("高度参考")
             start = next(w for w in walk(studio.body) if isinstance(w, tk.Button) and w.cget("text") == "开始制作")
+            duration = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox) and "15 秒" in w.cget("values"))
+            ratio = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox) and "方形 1∶1" in w.cget("values"))
+            duration.set("14 秒")
+            with patch("auto_video_ui.messagebox.showerror") as error, patch.object(studio, "job") as create_job:
+                start.invoke()
+                self.assertIn("至少 15 秒", error.call_args.args[1])
+                create_job.assert_not_called()
+            duration.set("15 秒")
+            ratio.set("方形 1∶1")
             with patch.object(studio, "job") as create_job:
                 start.invoke()
                 create_job.assert_called_once()
             job = next(p for p in store.projects() if "auto_video" in p)["auto_video"]
             self.assertEqual(job["request"]["direction"], "用一镜到底的剪纸动画。")
+            self.assertEqual(job["request"]["seconds"], 15)
+            self.assertEqual(studio.p["orientation"], "方形 1∶1")
+            self.assertEqual(job["request"]["visual_tier"], "director")
+            self.assertEqual(store.prefs()["auto_visual_tier"], "director")
+            self.assertEqual(job["request"]["asset_reference"], "high")
+            self.assertEqual(store.prefs()["auto_asset_reference"], "high")
             self.assertEqual(job["models"]["script"], {"engine": "Codex", "model": "my-writer"})
             self.assertEqual(job["models"]["assets"], {"engine": "DSH", "model": "my-artist"})
             self.assertEqual(job["models"]["shots"], {"engine": "Codex", "model": "default-writer"})
             self.assertEqual(job["models"]["images"], {})
+
+            project_id = studio.p["id"]
+            studio.p["auto_video"]["next_stage"] = "assets"
+            studio.p["auto_video"]["request"].pop("visual_tier")
+            studio.p["auto_video"]["request"].pop("asset_reference")
+            studio.go("auto_video")
+            selector = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox)
+                            and "导演级原创" in w.cget("values"))
+            selector.set("导演级原创")
+            reference = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox)
+                             and "高度参考" in w.cget("values"))
+            self.assertEqual(reference.get(), "平衡参考")
+            reference.set("自主创作")
+            ratio = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox) and "方形 1∶1" in w.cget("values"))
+            self.assertEqual(ratio.get(), "方形 1∶1")
+            ratio.set("横屏 16∶9")
+            resume = next(w for w in walk(studio.body) if isinstance(w, tk.Button) and w.cget("text") == "继续制作")
+            with patch.object(studio, "job") as create_job:
+                resume.invoke()
+                create_job.assert_called_once()
+            resumed = next(p["auto_video"] for p in store.projects() if p["id"] == project_id)
+            self.assertEqual(resumed["request"]["visual_tier"], "director")
+            self.assertEqual(resumed["request"]["asset_reference"], "independent")
+            self.assertEqual(resumed["next_stage"], "assets")
+            self.assertEqual(studio.p["orientation"], "方形 1∶1")
+
+            studio.p["shots"] = [{"start": 0, "end": 1, "kind": "voice", "visual": "原创场景", "art": {"svg": SVG}}]
+            studio.go("auto_video")
+            reference = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox)
+                             and "高度参考" in w.cget("values"))
+            self.assertEqual(reference.get(), "自主创作")
+            reference.set("高度参考")
+            resume = next(w for w in walk(studio.body) if isinstance(w, tk.Button) and w.cget("text") == "继续制作")
+            with patch.object(studio, "job") as create_job:
+                resume.invoke()
+                create_job.assert_called_once()
+            persisted = next(p for p in store.projects() if p["id"] == project_id)
+            self.assertEqual(persisted["auto_video"]["request"]["asset_reference"], "independent")
+            self.assertEqual(persisted["shots"][0]["art"]["svg"], SVG)
 
     def test_selected_routes_empty_library_retry_and_rendered_overlay(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             store = Store(root)
             previous_engine = store.prefs()["engine"]
-            project = auto_video.new_job("移动的光", "1 秒", "蓝晒")
+            project = auto_video.new_job("移动的光", "15 秒", "蓝晒")
             img = BytesIO()
             Image.new("RGB", (72, 128), "#164ac7").save(img, "PNG")
             b64 = base64.b64encode(img.getvalue()).decode()
@@ -91,7 +153,7 @@ class CreativeVideoTests(unittest.TestCase):
                 "story": [{"end": 1, "visual": "橙光移动", "section": "流动"},
                           {"end": 2, "visual": "停驻", "section": "静止"}],
                 "artist": [{"shot": 1, "svg": SVG, "image_prompt": "蓝色幕布"},
-                           {"shot": 2, "image_prompt": "蓝色纸张"}],
+                           {"shot": 2, "svg": SVG, "image_prompt": "蓝色纸张"}],
             }
 
             class Gateway(BaseHTTPRequestHandler):
@@ -175,7 +237,7 @@ class CreativeVideoTests(unittest.TestCase):
             def pixel(t, x):
                 return production.ffmpeg("-ss", t, "-i", video, "-vf", f"crop=4:4:{x}:380,scale=1:1",
                                          "-frames:v", 1, "-f", "rawvideo", "-pix_fmt", "rgb24", "-")
-            first, last = pixel(0, 65), pixel(.44, 570)
+            first, last = pixel(0, 65), pixel(.58, 570)
             for rgb in (first, last):
                 self.assertGreater(rgb[0], rgb[2] + 100)
             blue = pixel(.44, 65)
@@ -204,6 +266,76 @@ class CreativeVideoTests(unittest.TestCase):
         for invalid in ('<image href="file:///C:/unused"/>', '<script/>'):
             with self.assertRaises(ValueError):
                 Artwork(SVG.replace("</svg>", invalid + "</svg>"))
+
+    def test_visual_tiers_send_distinct_directions_and_accept_original_work_without_references(self):
+        with tempfile.TemporaryDirectory() as folder:
+            reference = Path(folder) / "雨夜素材.mp4"
+            reference.touch()
+            assets = {"sample": {"name": reference.name, "path": str(reference), "category": "video"}}
+            for key, tier in planning.VISUAL_TIERS.items():
+                with self.subTest(tier=key):
+                    project = auto_video.new_job("红灯", "", "", visual_tier=key)
+                    project.update(approved="红灯亮起。", shots=[{"start": 0, "end": 1, "kind": "voice", "visual": "信号灯"}])
+                    with patch("providers.generate", return_value=SVG) as generate:
+                        (selected, designs), = planning.visual_batches({}, "", project, assets, creative=True)
+                    brief, data = generate.call_args.args[-2:]
+                    self.assertIn("素材库只是参考", brief)
+                    self.assertIn(tier.prompt, brief)
+                    self.assertEqual(data["动效提示词档位"], tier.label)
+                    self.assertTrue(data["素材"])
+                    self.assertEqual(selected, [])
+                    self.assertEqual(designs[0]["layer"], "main")
+
+    def test_three_reference_policies_allow_original_drawings_with_or_without_a_library(self):
+        with tempfile.TemporaryDirectory() as folder:
+            reference = Path(folder) / "红灯实拍.mp4"
+            reference.touch()
+            library = {"clip": {"name": reference.name, "path": str(reference), "category": "video"}}
+            prompts = set()
+            for key, policy in planning.ASSET_REFERENCES.items():
+                project = auto_video.new_job("红灯", "", "", asset_reference=key)
+                project.update(approved="红灯亮起。",
+                               shots=[{"start": 0, "end": 1, "kind": "voice", "visual": "信号灯"}])
+                for assets in ({}, library):
+                    with self.subTest(policy=key, has_library=bool(assets)):
+                        with patch("providers.generate", return_value=SVG) as generate:
+                            (selected, designs), = planning.visual_batches({}, "", project, assets, creative=True)
+                        brief, data = generate.call_args.args[-2:]
+                        prompts.add(brief)
+                        self.assertIn(policy.prompt, brief)
+                        self.assertIn(planning.ASSET_REFERENCE_RULE, brief)
+                        self.assertEqual(data["素材库参考程度"], policy.label)
+                        self.assertEqual(bool(data["素材"]), bool(assets))
+                        self.assertEqual(selected, [])
+                        self.assertEqual(designs[0]["layer"], "main")
+            self.assertEqual(len(prompts), 3)
+
+    def test_empty_invisible_and_late_animations_are_not_accepted(self):
+        project = auto_video.new_job("信号灯", "", "", visual_tier="director")
+        project.update(approved="红灯亮起。", shots=[{"start": 0, "end": 1, "kind": "voice", "visual": "信号灯"}])
+        for invalid in (SVG.replace('from="0" to="56"', 'from="0" to="0"'),
+                        SVG.replace('fill="#ff6400"', 'fill="none"'),
+                        SVG.replace('dur="1s"', 'begin="1.5s" dur="1s"')):
+            with self.subTest(svg=invalid), patch("providers.generate", return_value=invalid) as generate:
+                with self.assertRaisesRegex(ValueError, "没有可见变化"):
+                    list(planning.visual_batches({}, "", project, {}, creative=True))
+                self.assertIn("上次需修正的问题", generate.call_args.args[-1])
+                self.assertEqual(generate.call_count, 2)
+
+    def test_pending_automatic_preview_does_not_make_text_cards(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            project = auto_video.new_job("红灯", "", "")
+            project["auto_video"]["request"].pop("visual_tier")
+            project["auto_video"]["next_stage"] = "assets"
+            project.update(draft="红灯亮起。", approved="红灯亮起。",
+                           shots=[{"start": 0, "end": 1, "kind": "voice", "visual": "信号灯"}])
+            with (patch("production.speech_files", return_value=[root / "voice.wav"]),
+                  patch("production.wav_seconds", return_value=1), patch("production.join_wav", return_value=1),
+                  patch("production.SceneIllustrator") as illustrator):
+                with self.assertRaisesRegex(ValueError, "续做动效"):
+                    production.timeline(root, project, {}, root, lambda _: None, need_picture=True)
+                illustrator.assert_not_called()
 
     def test_resume_keeps_artwork_from_completed_shots(self):
         with tempfile.TemporaryDirectory() as folder:

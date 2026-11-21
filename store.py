@@ -17,6 +17,9 @@ LIBRARIES = {"theme": "主题风格库", "effect": "动效库", "video": "视频
 IMAGES = {".png", ".jpg", ".jpeg", ".webp", ".bmp"}
 VIDEOS = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".avi"}
 SHOT_SLOTS = {"main": "主体画面", "theme": "主题底图", "effect": "动效叠层"}
+DEFAULT_VIDEO_RATIO = "竖屏 9∶16"
+VIDEO_RATIOS = {DEFAULT_VIDEO_RATIO: (9, 16), "竖屏 3∶4": (3, 4),
+                "横屏 16∶9": (16, 9), "方形 1∶1": (1, 1)}
 APP_NAME = "VAT（自动剪辑软件）"
 DEFAULTS = {
     "engine": "", "codex_path": "", "codex_model": "", "api_profile": "",
@@ -46,10 +49,15 @@ def library_extensions(category):
     return IMAGES | VIDEOS
 
 
+def video_size(orientation, short_edge=720):
+    ratio = VIDEO_RATIOS.get(orientation, VIDEO_RATIOS[DEFAULT_VIDEO_RATIO])
+    return tuple(short_edge * side // (2 * min(ratio)) * 2 for side in ratio)
+
+
 def new_project(title):
     return upgrade_project({
         "id": uid(), "title": title, "topics": [], "topic_id": "", "draft": "",
-        "approved": "", "shots": [], "orientation": "竖屏 9∶16",
+        "approved": "", "shots": [], "orientation": DEFAULT_VIDEO_RATIO,
         "sfx": "", "sfx_volume": 18, "exports": [],
     })
 

@@ -5,6 +5,9 @@ from pathlib import Path
 from unittest.mock import patch
 from zipfile import ZipFile
 
+from PIL import Image
+
+import auto_video
 import production
 import review
 from store import Store, new_project, shots_from_plan
@@ -23,6 +26,28 @@ class ReviewTests(unittest.TestCase):
         self.store = Store(self.root)
         self.project = new_project("审看测试")
         self.report = lambda _: None
+
+    def test_fifteen_second_target_reaches_the_selected_canvas_in_preview_and_export(self):
+        voice = self.root / "voice.wav"
+        artwork = self.root / "artwork.png"
+        production.ffmpeg("-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=14", voice)
+        Image.new("RGB", (72, 96), "navy").save(artwork)
+        project = auto_video.new_job("短片", "15 秒", "", orientation="竖屏 3∶4")
+        (asset,) = self.store.add_asset("image", project["id"], artwork)
+        project.update(draft="一条十五秒短片。", approved="一条十五秒短片。", target_seconds=15,
+                       shots=[{"start": 0, "end": 1, "visual": "夜空", "kind": "voice", "main": asset["id"]}])
+        assets = self.store.assets(project["id"])
+        with patch("production.speech_files", return_value=[voice]):
+            record = review.create_preview(self.root, project, assets, self.report)
+            exports = dict(production.render(self.root, project, assets, True, self.report))
+        folder = review.version_dir(self.root, project["id"], record["version"])
+        manifest = json.loads((folder / review.TIMELINE).read_text(encoding="utf-8"))
+        self.assertEqual((manifest["preview"]["width"], manifest["preview"]["height"]), (360, 480))
+        self.assertEqual((manifest["canvas"]["width"], manifest["canvas"]["height"]), (720, 960))
+        info = production.probe(exports["完整成片"])
+        video = next(stream for stream in info["streams"] if stream["codec_type"] == "video")
+        self.assertEqual((video["width"], video["height"]), (720, 960))
+        self.assertAlmostEqual(float(video["duration"]), 15, delta=.12)
 
     def test_package_matches_watched_cut_after_sources_and_project_change(self):
         camera = self.root / "原始口播.mp4"

@@ -23,6 +23,7 @@ import task_control
 from creative_art import render_artwork
 from shot_visuals import SceneIllustrator, font, lines_for
 from store import IMAGES, VIDEOS, SHOT_SLOTS, confirmed, script_units, shot_clips, uid
+from store import video_size as picture_size
 
 
 FPS = 25
@@ -272,11 +273,6 @@ def visual_sequence(assets, frames, n, slot):
     return sequence
 
 
-def picture_size(orientation, short_edge=720):
-    long_edge = short_edge * 16 // 9
-    return (short_edge, long_edge) if orientation.startswith("竖") else (long_edge, short_edge)
-
-
 def illustrate_shot(illustrator, temp, number, shot, frames):
     clips = []
     for index, (plate, start, length, source) in enumerate(illustrator.plates(temp, number, shot, frames, FPS)):
@@ -347,6 +343,9 @@ def wav_seconds(path):
 def timeline(root,p,assets,temp,report,need_picture=False,need_material_audio=False,*,voice_profile=""):
     if not confirmed(p) or not p["shots"]:
         raise ValueError("请先确认定稿、划分段落并保存分镜。")
+    auto_state = p.get("auto_video", {})
+    needs_original = (auto_state.get("request", {}).get("visual_tier")
+                      or auto_state.get("next_stage") in {"plan", "script", "shots", "assets", "images"})
     units=script_units(p["approved"])
     synth_indices=sorted({i for s in p["shots"] if voice_source(s)=="synth" for i in range(s["start"],s["end"])})
     waves={}
@@ -444,6 +443,8 @@ def timeline(root,p,assets,temp,report,need_picture=False,need_material_audio=Fa
                 else:
                     layers["main"] = [clip]
         if need_picture and not (layers["main"] or layers["theme"]):
+            if needs_original:
+                raise ValueError(f"第 {n} 镜尚无可渲染的主体。请在「一键生成视频」里续做动效，或手动补齐画面。")
             if illustrator is None:
                 illustrator = SceneIllustrator(root, p, picture_size(p["orientation"]), report)
             report(f"正在按第 {n} 镜台词制作主体画面")

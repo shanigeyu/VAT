@@ -92,7 +92,7 @@ class JobControlTests(unittest.TestCase):
     def test_completed_script_is_saved_before_cancellation_and_reopen(self):
         with tempfile.TemporaryDirectory() as folder:
             store = Store(folder)
-            project = auto_video.new_job("保存步骤", "2秒", "")
+            project = auto_video.new_job("保存步骤", "15秒", "")
             store.save(project)
             control = task_control.JobControl()
 

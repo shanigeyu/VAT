@@ -12,7 +12,8 @@ from ui_language import tr
 from widgets import GREEN, DIM, action_row, box, button, checkbox, dialog, field, frame, label, pixels, scroll_page
 
 
-SECTIONS = {"appearance": "外观与语言", "models": "模型与 API", "paths": "文件与工具", "help": "使用指南"}
+SECTIONS = {"appearance": "外观与语言", "models": "模型与 API", "paths": "文件与工具",
+            "help": "使用指南", "changelog": "更新日志"}
 TOOL_ROWS = (("ffmpeg_dir", "FFmpeg 目录"), ("ego_cli", "Ego CLI 文件"), ("sovits_dir", "GPT-SoVITS 目录"),
              ("sovits_python", "SoVITS Python"), ("font_file", "渲染字体文件"))
 
@@ -53,9 +54,10 @@ class SettingsPages:
             button(tabs, title, lambda k=key: self.show_settings(k),
                    "primary" if key == self.settings_section else "plain").pack(side="left", padx=(0, 4))
         label(tabs, "VAT " + release.version(), 10, GREEN, localize=False).pack(side="right", padx=(8, 2))
-        content = scroll_page(self.body)
+        content = self.body if self.settings_section == "changelog" else scroll_page(self.body)
         {"appearance": self.appearance_settings, "models": self.model_settings,
-         "paths": self.path_settings, "help": self.help_settings}[self.settings_section](content)
+         "paths": self.path_settings, "help": self.help_settings,
+         "changelog": self.changelog_settings}[self.settings_section](content)
 
     def show_settings(self, section):
         if section != self.settings_section:
@@ -238,10 +240,16 @@ class SettingsPages:
         row = action_row(body)
         button(row, "联系方式与使用须知", self.show_notice, "primary").pack(side="left")
 
+    def changelog_settings(self, parent):
+        self.show_readonly_document(parent, "CHANGELOG.md")
+
     def show_manual(self):
-        text = Path(__file__).with_name("使用说明.md").read_text(encoding="utf-8-sig")
         win = dialog(self.root, "使用说明", 760, 560)
-        wrap = frame(win)
+        self.show_readonly_document(win, "使用说明.md")
+
+    def show_readonly_document(self, parent, filename):
+        text = Path(__file__).with_name(filename).read_text(encoding="utf-8-sig")
+        wrap = frame(parent)
         wrap.pack(fill="both", expand=True, padx=16, pady=16)
         view = tk.Text(wrap, wrap="word", relief="flat", padx=16, pady=12,
                        bg=appearance.current["surface"], fg=appearance.current["ink"], font="TkTextFont")

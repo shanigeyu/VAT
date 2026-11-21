@@ -2,19 +2,23 @@
 
 from copy import deepcopy
 from pathlib import Path
-from tkinter import filedialog
+from tkinter import filedialog, messagebox
 
 import auto_video
 import script_timing
 import speech_api
 import step_models
+from planning import ASSET_REFERENCES, VISUAL_TIERS, asset_reference_key, visual_tier_key
 from shot_visuals import ILLUSTRATION_STYLES
+from store import DEFAULT_VIDEO_RATIO, VIDEO_RATIOS
 from ui_language import Choice, tr
 from widgets import DIM, GREEN, action_row, box, button, editor, entry_row, frame, label, read, scroll_page
 
 
 ROLE_TITLES = {"plan": "策划", "script": "文案", "shots": "分镜", "assets": "选材与动效", "images": "AI 生图"}
 AUTO_PREF = "auto_model."
+VISUAL_TIER_PREF = "auto_visual_tier"
+ASSET_REFERENCE_PREF = "auto_asset_reference"
 
 
 def estimated_time(plan):
@@ -28,7 +32,10 @@ class AutoVideoPage:
         state = self.p.get("auto_video", {})
         next_stage = state.get("next_stage")
         pending = next_stage in auto_video.STAGES
+        can_edit_format = next_stage == "plan"
         inputs = state["request"] if pending else {}
+        can_change_tier = next_stage in ("plan", "script", "shots", "assets") and not any(
+            (shot.get("art") or {}).get("svg") for shot in self.p["shots"])
         page = scroll_page(self.body)
         cards = frame(page)
         cards.pack(fill="x")
@@ -44,17 +51,76 @@ class AutoVideoPage:
         duration_row = frame(form)
         duration_row.pack(fill="x", pady=4)
         label(duration_row, "预期成片时长", color=DIM, width=12).pack(side="left")
-        duration = Choice(duration_row, values=[script_timing.display_time(s) for s in script_timing.PRESETS])
+        duration = Choice(duration_row, values=[script_timing.display_time(s) for s in auto_video.DURATION_PRESETS])
         if inputs.get("seconds"):
             duration.set(script_timing.display_time(inputs["seconds"]))
         duration.pack(side="left", fill="x", expand=True)
-        label(form, "可输入 45 秒、1:30 或 2 分钟。", 9, DIM).pack(anchor="w", pady=(0, 5))
+        label(form, "最短 15 秒，也可输入 1:30 或 2 分钟。", 9, DIM).pack(anchor="w", pady=(0, 5))
+        ratio_row = frame(form)
+        ratio_row.pack(fill="x", pady=4)
+        label(ratio_row, "画幅比例", color=DIM, width=12).pack(side="left")
+        orientation = Choice(ratio_row, values=tuple(VIDEO_RATIOS), state="readonly")
+        saved_format = self.p["orientation"] if pending else DEFAULT_VIDEO_RATIO
+        orientation.set(saved_format if saved_format in VIDEO_RATIOS else DEFAULT_VIDEO_RATIO)
+        orientation.pack(side="left", fill="x", expand=True)
+        if pending and not can_edit_format:
+            label(form, "调整时长或画幅后，请另开一期；续做沿用原设置。", 9, DIM).pack(anchor="w", pady=(0, 5))
         style_row = frame(form)
         style_row.pack(fill="x", pady=4)
         label(style_row, "主题风格", color=DIM, width=12).pack(side="left")
         style = Choice(style_row, values=tuple(ILLUSTRATION_STYLES))
         style.set(inputs.get("style", ""))
         style.pack(side="left", fill="x", expand=True)
+        tier_row = frame(form)
+        tier_row.pack(fill="x", pady=4)
+        label(tier_row, "动效提示词", color=DIM, width=12).pack(side="left")
+        tier_labels = {tier.label: key for key, tier in VISUAL_TIERS.items()}
+        tier_choice = Choice(tier_row, values=tuple(tier_labels), state="readonly")
+        saved_tier = visual_tier_key(inputs.get("visual_tier") if pending else self.prefs.get(VISUAL_TIER_PREF))
+        tier_choice.set(VISUAL_TIERS[saved_tier].label)
+        tier_choice.pack(side="left", fill="x", expand=True)
+        tier_hint = label(form, "", 9, DIM, justify="left")
+        tier_hint.pack(fill="x", pady=(0, 4))
+        tier_hint.bind("<Configure>", lambda event: tier_hint.configure(wraplength=max(160, event.width - 4)))
+
+        def selected_tier():
+            return visual_tier_key(tier_labels.get(tier_choice.get()))
+
+        def describe_tier(_event=None):
+            hint = tr(VISUAL_TIERS[selected_tier()].summary)
+            if can_change_tier:
+                hint += "\n" + tr("继续制作时，此档用于尚未完成的环节。")
+            elif pending:
+                hint += "\n" + tr("继续制作沿用原档：{}。另开一期使用当前选择。").format(tr(VISUAL_TIERS[saved_tier].label))
+            tier_hint.configure(text=hint)
+
+        tier_choice.bind("<<ComboboxSelected>>", describe_tier)
+        describe_tier()
+        reference_row = frame(form)
+        reference_row.pack(fill="x", pady=4)
+        label(reference_row, "素材库参考程度", color=DIM, width=12).pack(side="left")
+        reference_labels = {reference.label: key for key, reference in ASSET_REFERENCES.items()}
+        reference_choice = Choice(reference_row, values=tuple(reference_labels), state="readonly")
+        saved_reference = asset_reference_key(
+            inputs.get("asset_reference") if pending else self.prefs.get(ASSET_REFERENCE_PREF))
+        reference_choice.set(ASSET_REFERENCES[saved_reference].label)
+        reference_choice.pack(side="left", fill="x", expand=True)
+        reference_hint = label(form, "", 9, DIM, justify="left")
+        reference_hint.pack(fill="x", pady=(0, 4))
+        reference_hint.bind("<Configure>", lambda event: reference_hint.configure(wraplength=max(160, event.width - 4)))
+
+        def selected_reference():
+            return asset_reference_key(reference_labels.get(reference_choice.get()))
+
+        def describe_reference(_event=None):
+            hint = tr(ASSET_REFERENCES[selected_reference()].summary)
+            if pending and not can_change_tier:
+                hint += "\n" + tr("继续制作沿用原档：{}。另开一期使用当前选择。").format(
+                    tr(ASSET_REFERENCES[saved_reference].label))
+            reference_hint.configure(text=hint)
+
+        reference_choice.bind("<<ComboboxSelected>>", describe_reference)
+        describe_reference()
         label(form, "创作要求（选填）", 10, DIM).pack(anchor="w", pady=(6, 3))
         direction = editor(form, inputs.get("direction", ""), height=2)
         direction.pack(fill="x")
@@ -197,17 +263,20 @@ class AutoVideoPage:
             result.pack(fill="x", pady=(12, 0))
             eta.configure(text=estimated_time(plan))
             summary.configure(text=plan["title"])
-            text = tr("目标成片时长 · {}  |  主题风格 · {}").format(tr(script_timing.display_time(plan["seconds"])), plan["style"])
+            text = tr("目标成片时长 · {}  |  画幅 · {}  |  主题风格 · {}").format(
+                tr(script_timing.display_time(plan["seconds"])), tr(self.p["orientation"]), plan["style"])
             if completed:
-                text += "\n" + tr("成片 {} 秒  |  实际制作耗时 {}  |  {}").format(
+                text += "\n" + tr("成片 {} 秒  |  实际制作耗时 {}").format(
                     f"{completed['video_seconds']:.1f}", tr(script_timing.display_time(completed["elapsed_seconds"])),
-                    tr(self.p["orientation"]),
                 )
             metrics.configure(text=text)
 
         def launch(project):
             self.save_now()
             job_state = project["auto_video"]
+            if project is self.p and can_change_tier:
+                job_state["request"]["visual_tier"] = selected_tier()
+                job_state["request"]["asset_reference"] = selected_reference()
             start_stage = job_state["next_stage"]
             if start_stage == "images" and not choices["images"] and any(
                     shot.get("art", {}).get("image_prompt") for shot in project["shots"]):
@@ -260,12 +329,36 @@ class AutoVideoPage:
                      lambda project: show_result(project, "一键制作完成"), show_elapsed=True,
                      on_progress=progress, on_error=failed, on_cancel=cancelled)
 
+        def start_new_job():
+            tier = selected_tier()
+            reference = selected_reference()
+            try:
+                project = auto_video.new_job(topic.get(), duration.get(), style.get(), direction=read(direction),
+                                             visual_tier=tier, orientation=orientation.get(), asset_reference=reference)
+            except ValueError as error:
+                messagebox.showerror(tr("请检查视频要求"), tr(str(error)), parent=self.root)
+                return
+            preferences = {VISUAL_TIER_PREF: tier, ASSET_REFERENCE_PREF: reference}
+            self.store.set_prefs(preferences)
+            self.prefs.update(preferences)
+            launch(project)
+
+        def resume_job():
+            if can_edit_format:
+                try:
+                    seconds = auto_video.duration_seconds(duration.get())
+                except ValueError as error:
+                    messagebox.showerror(tr("请检查视频要求"), tr(str(error)), parent=self.root)
+                    return
+                inputs["seconds"] = seconds
+                self.p["orientation"] = orientation.get()
+            launch(self.p)
+
         controls = action_row(form)
-        button(controls, "另开一期" if pending else "开始制作",
-               lambda: launch(auto_video.new_job(topic.get(), duration.get(), style.get(), direction=read(direction))),
+        button(controls, "另开一期" if pending else "开始制作", start_new_job,
                "secondary" if pending else "primary").pack(side="left")
         if pending:
-            button(controls, "继续制作", lambda: launch(self.p), "primary").pack(side="left", padx=6)
+            button(controls, "继续制作", resume_job, "primary").pack(side="left", padx=6)
         label(form, "制作时可点“中断并保存”，重新打开项目后可继续。", 9, DIM).pack(anchor="w", pady=(8, 0))
 
         show_status(next_stage)

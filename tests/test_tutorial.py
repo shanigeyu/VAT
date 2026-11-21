@@ -6,9 +6,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import app_paths
+import release
 import studio as studio_module
 from store import Store
 from studio import TUTORIAL_ENVIRONMENT, TUTORIAL_STEPS, Studio
+from widgets import SoftButton
 
 
 class TutorialTests(unittest.TestCase):
@@ -105,6 +107,17 @@ class TutorialTests(unittest.TestCase):
         self.assertIn(str(Path(studio_module.__file__).resolve()), copied)
         self.assertIn(str(app_paths.config_dir()), copied)
         self.assertIn(str(Store().root / "workspace.sqlite3"), copied)
+
+    def test_settings_changelog_displays_the_current_release_and_history(self):
+        self.editor.go("settings")
+        buttons = self.widgets(self.editor.body, (tk.Button, SoftButton))
+        next(button for button in buttons if button.cget("text") == "更新日志").invoke()
+
+        (document,) = self.widgets(self.editor.body, tk.Text)
+        expected = Path(studio_module.__file__).with_name("CHANGELOG.md").read_text(encoding="utf-8-sig")
+        self.assertIn(f"## [{release.APP_VERSION}]", expected)
+        self.assertEqual(document.get("1.0", "end-1c"), expected)
+        self.assertEqual(document.cget("state"), "disabled")
 
 
 if __name__ == "__main__":

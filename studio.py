@@ -25,7 +25,7 @@ from settings_ui import SettingsPages, path_row
 from api_settings import ApiSettings
 from auto_video_ui import AutoVideoPage
 from workflow_ui import WorkflowPages
-from store import APP_NAME
+from store import APP_NAME, VIDEO_RATIOS
 from widgets import action_row, advanced_options, bind_context_menu, entry_row, scroll_page, selected
 import codex_harness
 import planning
@@ -1406,7 +1406,7 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
         row = frame(pane)
         row.pack(fill="x")
         label(row, "画幅", color=DIM).pack(side="left", padx=(0, 8))
-        orientation = Choice(row, values=["竖屏 9∶16","横屏 16∶9"], state="readonly", width=12)
+        orientation = Choice(row, values=tuple(VIDEO_RATIOS), state="readonly", width=12)
         orientation.set(self.p["orientation"])
         orientation.pack(side="left")
         label(row, f"{short_edge}p  /  {production.FPS} fps", 9, DIM).pack(side="left", padx=10)

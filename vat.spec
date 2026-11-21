@@ -5,7 +5,7 @@ import tkinterdnd2
 from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 
 root = Path(SPECPATH)
-resources = [(str(root / name), ".") for name in ("studio.ico", "ego_douyin.mjs", "使用说明.md")]
+resources = [(str(root / name), ".") for name in ("studio.ico", "ego_douyin.mjs", "使用说明.md", "CHANGELOG.md")]
 resources += collect_data_files("langdetect")
 resources += copy_metadata("resvg-py")
 resources += copy_metadata("svg.path")

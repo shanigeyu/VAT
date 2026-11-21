@@ -30,7 +30,8 @@ AUTHORING = (
     "可以原创插画、道具、场景、图形叙事、手绘路径、文字排版或动态叠层。按镜头内容自行构图、配色和安排节奏。"
     "要绘制时输出 svg 字段，值是完整的内联 SVG 字符串，包含 viewBox。支持 path、基本形状、文字、渐变、蒙版和分组。"
     "动效写 SVG animate、animateTransform 或带 path 的 animateMotion，支持路径运动、颜色、透明度、描边和变换。"
-    "用 from/to 或 values、keyTimes、keySplines、begin、dur、repeatCount、fill。1s 对应整镜时长。"
+    "用 from/to 或 values、keyTimes、keySplines、begin、dur、repeatCount、fill。镜头使用 0s 到 1s 的归一化时间，"
+    "例如 begin=0.2s、dur=0.45s 表示在全镜 20% 处开始并持续全镜时长的 45%，不要把真实秒数写进 SVG 时间轴。"
     "只引用 SVG 内部的 #id。独立画面自行绘制背景，与实拍或生成图片组合时用透明底。底部为字幕留空间。"
 )
 
@@ -226,6 +227,30 @@ class Artwork:
         self.root.set("height", str(size[1]))
         return svg_to_bytes(svg_string=ET.tostring(self.root, encoding="unicode"), skip_system_fonts=True, **fonts)
 
+    def font_options(self):
+        if not self.has_text:
+            return {}
+        from shot_visuals import font
+        normal, bold = font(24), font(24, True)
+        family = normal.getname()[0]
+        return {"font_files": list(dict.fromkeys([str(normal.path), str(bold.path)])),
+                "font_family": family, "sans_serif_family": family}
+
+    def has_visible_motion(self, size):
+        if not any(motion.begin < 1 for motion in self.animations):
+            return False
+        fonts = self.font_options()
+        baseline = self.frame(size, 0, fonts)
+        times = {0.12, 0.3, 0.55, 0.8, 1}
+        for motion in self.animations[:8]:
+            if motion.begin < 1:
+                times.add((motion.begin + min(1, motion.begin + motion.duration)) / 2)
+        for moment in sorted(times):
+            task_control.checkpoint()
+            if self.frame(size, moment, fonts) != baseline:
+                return True
+        return False
+
 
 def render_artwork(svg, temp, number, size, frames, fps, encoder):
     # Cache the artwork as a single completed handoff, including its frame loop.
@@ -239,13 +264,7 @@ def render_artwork(svg, temp, number, size, frames, fps, encoder):
 
 def _render_artwork(svg, temp, number, size, frames, fps, encoder):
     art = Artwork(svg)
-    fonts = {}
-    if art.has_text:
-        from shot_visuals import font
-        normal, bold = font(24), font(24, True)
-        family = normal.getname()[0]
-        fonts = {"font_files": list(dict.fromkeys([str(normal.path), str(bold.path)])),
-                 "font_family": family, "sans_serif_family": family}
+    fonts = art.font_options()
     if not art.animations or frames == 1:
         result = temp / f"original-{number}.png"
         result.write_bytes(art.frame(size, 0, fonts))

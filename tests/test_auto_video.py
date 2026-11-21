@@ -5,6 +5,8 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import auto_video
+import planning
+import production
 from speech_api import Profile
 from store import Store
 
@@ -19,7 +21,10 @@ class AutomaticVideoTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(auto_video.duration_seconds(text), 90)
         self.assertIsNone(auto_video.duration_seconds(" "))
-        for text in ("0", "0:00", "1:99", "随便"):
+        for text in ("15", "15 秒", "0:15", "0分15秒"):
+            with self.subTest(text=text):
+                self.assertEqual(auto_video.duration_seconds(text), 15)
+        for text in ("0", "0:00", "1:99", "随便", "14秒", "0:14"):
             with self.subTest(text=text), self.assertRaises(ValueError):
                 auto_video.duration_seconds(text)
         project = auto_video.new_job("整理文件", "90秒", "暗黑科技")
@@ -29,6 +34,17 @@ class AutomaticVideoTests(unittest.TestCase):
         self.assertEqual((plan["seconds"], plan["style"], plan["palette"]), (90, "暗黑科技", "暗黑科技"))
         self.assertEqual(plan["estimate"][0], 90)
         self.assertGreaterEqual(plan["estimate"][1], 225)
+
+    def test_automatic_duration_respects_the_minimum_and_formats_keep_their_ratios(self):
+        request = auto_video.new_job("", "", "")["auto_video"]["request"]
+        with patch("providers.generate", return_value=json.dumps({**PLAN, "seconds": 5})):
+            self.assertEqual(auto_video.make_plan({}, "", request, 0)["seconds"], 15)
+        for name, dimensions in (("竖屏 9∶16", (720, 1280)), ("竖屏 3∶4", (720, 960)),
+                                 ("横屏 16∶9", (1280, 720)), ("方形 1∶1", (720, 720))):
+            with self.subTest(name=name):
+                self.assertEqual(auto_video.new_job("", "15秒", "", orientation=name)["orientation"], name)
+                self.assertEqual(production.picture_size(name), dimensions)
+                self.assertEqual(production.picture_size(name, 360), tuple(edge // 2 for edge in dimensions))
 
     def test_slow_planner_increases_the_estimate(self):
         request = auto_video.new_job("", "", "")["auto_video"]["request"]
@@ -42,7 +58,7 @@ class AutomaticVideoTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             store = Store(root)
-            project = auto_video.new_job("", "", "")
+            project = auto_video.new_job("", "", "", orientation="横屏 16∶9", asset_reference="high")
             store.save(project)
             image = root / "下载文件夹.png"
             image.touch()
@@ -56,7 +72,7 @@ class AutomaticVideoTests(unittest.TestCase):
 
             replies = [json.dumps(PLAN), "先打开下载文件夹。再把资料按用途归类。",
                        '[{"end":2,"kind":"talk","visual":"下载文件夹的分类示例"}]',
-                       '[{"shot":1,"main":"1"}]']
+                       json.dumps([{"shot": 1, "main": "1", "svg": '<svg viewBox="0 0 100 100"><circle r="10" cy="40" cx="20"><animate attributeName="cx" from="20" to="80" dur="1s"/></circle></svg>'}])]
             video = root / "成片.mp4"
             entries = [("字幕", str(root / "字幕.srt")), ("完整成片", str(video))]
             metadata = {"streams": [{"codec_type": "video", "duration": "40.04"}]}
@@ -81,6 +97,12 @@ class AutomaticVideoTests(unittest.TestCase):
                 self.assertEqual(render.call_args.kwargs["voice_profile"], voice)
                 self.assertEqual(generate.call_count, 4)
                 self.assertEqual(generate.call_args_list[1].args[-1]["中文口播参考字数"], "160–188")
+                for stage_call in (0, 2, 3):
+                    brief, data = generate.call_args_list[stage_call].args[-2:]
+                    self.assertEqual(data["画幅"], "横屏 16∶9")
+                    self.assertIn(planning.ASSET_REFERENCES["high"].prompt, brief)
+                    self.assertIn(planning.ASSET_REFERENCE_RULE, brief)
+                self.assertEqual(saved["auto_video"]["request"]["asset_reference"], "high")
 
             self.assertEqual(routes, ["auto_video", "script", "shots", "shots"])
             self.assertEqual([event.stage for event in events], [*auto_video.STAGES, "render"])
