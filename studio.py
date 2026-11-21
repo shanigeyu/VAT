@@ -14,7 +14,7 @@ from urllib.parse import urlsplit
 
 from PIL import Image, ImageOps, ImageTk
 
-from desktop import open_path, start
+from desktop import log, open_path, start
 import appearance
 import app_paths
 import covers
@@ -121,6 +121,7 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
         self.active_job = None
         self._cancel_job = None
         self._close_after_job = False
+        self._closing = False
         self.library, self.topic_filter = "theme", "全部选题"
         self.library_locations = {}
         self.status = tk.StringVar(root, value=tr("项目保存在本机"))
@@ -255,8 +256,12 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
         never = tk.BooleanVar(win, value=self.prefs.get("tutorial") == "off")
 
         def finish():
-            self.store.set_pref("tutorial", "off" if never.get() else "show")
-            self.prefs = self.store.prefs()
+            # 教程是启动时唯一的操作窗口：这里保存失败也必须能关掉，否则整个软件都动不了。
+            try:
+                self.store.set_pref("tutorial", "off" if never.get() else "show")
+                self.prefs = self.store.prefs()
+            except Exception as exc:
+                log("保存教程设置失败", error=exc)
             # 销毁排到空闲时：先让控件把排队的布局事件走完，避免 Tk 报无效命令
             win.after_idle(win.destroy)
             if on_close:
@@ -362,13 +367,44 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
             self.timer = self.root.after(1000, self.autosave)
 
     def close(self):
-        if self.active_job is not None:
-            self._close_after_job = True
-            self._cancel_job()
+        """关窗口就一定要退出去。
+
+        以前任务卡在网络或外部进程上时，这里只发一次中断就返回，窗口和进程都不会关；
+        工作区锁还握在手里，下次再打开软件就成了「此工作区已打开」。所以保存和中断
+        都不许挡路，任务没停也要在几秒后强制关掉。
+        """
+        if self._closing:
             return
-        self.save_now()
-        self.root.after_cancel(self.timer)
-        self.root.destroy()
+        self._closing = True
+        try:
+            self.save_now()
+        except Exception as exc:
+            log("关闭前保存失败", error=exc)
+        if self.active_job is not None:
+            try:
+                if self._cancel_job:
+                    self._cancel_job()
+            except Exception as exc:
+                log("关闭时中断任务失败", error=exc)
+            try:
+                self.status.set(tr("正在中断并保存，窗口会自动关闭…"))
+                self.root.after(2500, self._force_close)
+            except tk.TclError:
+                self._force_close()
+            return
+        self._force_close()
+
+    def _force_close(self):
+        """不管前面发生什么，都把窗口销毁——这是唯一能保证退出的动作。"""
+        try:
+            if self.timer is not None:
+                self.root.after_cancel(self.timer)
+        except Exception:
+            pass
+        try:
+            self.root.destroy()
+        except tk.TclError:
+            pass
 
     def go(self, page):
         self.save_now()
@@ -487,42 +523,57 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
     def job(self, title, worker, done, parent=None, *, show_elapsed=False, on_progress=None, on_error=None,
             on_cancel=None):
         if self.active_job is not None:
-            self.active_job.lift()
-            return
+            # 任务窗口已经被关掉却还留在这里时，不能让它挡住所有后续操作。
+            try:
+                if self.active_job.winfo_exists():
+                    self.active_job.lift()
+                    return
+            except tk.TclError:
+                pass
+            self.active_job = None
+            self._cancel_job = None
         self.save_now()
         parent = parent or self.root
         win = dialog(parent, title, 480 if on_progress else 425, 254 if on_progress else 220)
-        self.active_job = win
         control = task_control.JobControl()
-        work = frame(win)
-        work.pack(fill="both", expand=True, padx=22, pady=20)
-        heading = frame(work)
-        heading.pack(fill="x")
-        label(heading, title, 14, bold=True).pack(side="left")
-        if show_elapsed:
-            elapsed = tk.StringVar(win)
-            label(heading, "", 10, DIM, textvariable=elapsed).pack(side="right")
-            started = time.monotonic()
-        status = tk.StringVar(win, value=tr("正在处理…"))
-        label(work, "", 9, DIM, textvariable=status, justify="left",
-              wraplength=pixels(win, 425) if on_progress else 0).pack(anchor="w", pady=(6, 11))
-        bar = ttk.Progressbar(work, mode="indeterminate")
-        bar.pack(fill="x")
-        bar.start(12)
-        label(work, "已完成的步骤会保留，可稍后继续制作。", 9, DIM).pack(anchor="w", pady=(9, 5))
+        try:
+            work = frame(win)
+            work.pack(fill="both", expand=True, padx=22, pady=20)
+            heading = frame(work)
+            heading.pack(fill="x")
+            label(heading, title, 14, bold=True).pack(side="left")
+            if show_elapsed:
+                elapsed = tk.StringVar(win)
+                label(heading, "", 10, DIM, textvariable=elapsed).pack(side="right")
+                started = time.monotonic()
+            status = tk.StringVar(win, value=tr("正在处理…"))
+            label(work, "", 9, DIM, textvariable=status, justify="left",
+                  wraplength=pixels(win, 425) if on_progress else 0).pack(anchor="w", pady=(6, 11))
+            bar = ttk.Progressbar(work, mode="indeterminate")
+            bar.pack(fill="x")
+            bar.start(12)
+            label(work, "已完成的步骤会保留，可稍后继续制作。", 9, DIM).pack(anchor="w", pady=(9, 5))
 
-        def cancel():
-            if control.cancelled:
-                return
-            control.cancel()
-            cancel_button.configure(state="disabled", text=tr("正在中断并保存…"))
-            status.set(tr("正在停止当前工作并保存进度…"))
+            def cancel():
+                if control.cancelled:
+                    return
+                control.cancel()
+                cancel_button.configure(state="disabled", text=tr("正在中断并保存…"))
+                status.set(tr("正在停止当前工作并保存进度…"))
 
-        cancel_button = button(work, "中断并保存", cancel, "secondary")
-        cancel_button.pack(anchor="e")
-        self._cancel_job = cancel
-        win.protocol("WM_DELETE_WINDOW", cancel)
-        win.bind("<Escape>", lambda _event: cancel())
+            cancel_button = button(work, "中断并保存", cancel, "secondary")
+            cancel_button.pack(anchor="e")
+            self.active_job, self._cancel_job = win, cancel
+            win.protocol("WM_DELETE_WINDOW", cancel)
+            win.bind("<Escape>", lambda _event: cancel())
+        except Exception:
+            # 建到一半失败也要把窗口收掉，否则抓取会一直留在半成品窗口上。
+            try:
+                win.destroy()
+            except tk.TclError:
+                pass
+            self.active_job = self._cancel_job = None
+            raise
         events = queue.Queue()
 
         def report(value):
@@ -553,24 +604,39 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
                 self.active_job = None
                 self._cancel_job = None
                 win.destroy()
-                if parent != self.root and parent.winfo_exists():
-                    parent.grab_set()
-                if kind == "cancelled":
-                    if on_cancel:
+                if parent != self.root:
+                    try:
+                        if parent.winfo_exists():
+                            parent.grab_set()
+                    except tk.TclError:
+                        pass
+                closing = self._close_after_job or self._closing
+                if kind == "cancelled" and on_cancel:
+                    try:
                         on_cancel()
+                    except Exception as exc:
+                        log("中断回调出错", error=exc)
+                if closing:
+                    # 窗口正在关：结果已经写进项目，别再弹窗或刷新页面拖住退出。
+                    self._close_after_job = False
+                    try:
+                        self.save_now()
+                    except Exception as exc:
+                        log("退出前保存失败", error=exc)
+                    self._force_close()
+                    return
+                if kind == "cancelled":
                     self.save_now()
                     self.status.set(tr("已中断，已完成的步骤和项目已保存"))
                 elif kind == "error":
                     if on_error:
                         on_error(value)
-                    if not self._close_after_job:
-                        messagebox.showerror(tr(title), notice(value), parent=parent)
+                    messagebox.showerror(tr(title), notice(value), parent=parent)
                 else:
                     done(value)
-                if self._close_after_job:
-                    self._close_after_job = False
-                    self.close()
                 return
+            if self._close_after_job or self._closing:
+                return  # 正在关窗：不再排下一轮，强制关闭的计时会接手
             self.root.after(75, poll)
         threading.Thread(target=run, daemon=True).start()
         poll()

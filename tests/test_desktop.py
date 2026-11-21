@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from desktop import prepare_external_tools, workspace_lock
+from desktop import activate_window, log, log_location, prepare_external_tools, reveal, workspace_lock
 from store import Store
 from studio import PAGES, Studio
 
@@ -37,6 +37,29 @@ class DesktopTests(unittest.TestCase):
                 self.assertFalse(second)
             with workspace_lock(path) as reopened:
                 self.assertTrue(reopened)
+
+    def test_reveal_pulls_a_window_back_onto_the_screen(self):
+        try:
+            root = tk.Tk()
+        except tk.TclError as exc:
+            self.skipTest(str(exc))
+        self.addCleanup(root.destroy)
+        root.geometry("640x480+-6000+-6000")
+        reveal(root)
+        self.assertGreaterEqual(root.winfo_x(), 0)
+        self.assertGreaterEqual(root.winfo_y(), 0)
+        self.assertLess(root.winfo_x(), root.winfo_screenwidth())
+        self.assertLess(root.winfo_y(), root.winfo_screenheight())
+
+    def test_activating_a_window_that_is_not_running_reports_failure(self):
+        if os.name != "nt":
+            self.skipTest("只测 Windows 的窗口唤醒")
+        self.assertFalse(activate_window("VAT 不存在的窗口 · test"))
+
+    def test_log_records_a_line_without_raising(self):
+        log("单元测试记录")
+        text = Path(log_location()).read_text(encoding="utf-8")
+        self.assertIn("单元测试记录", text)
 
     def test_open_every_page_without_accounts_or_user_media(self):
         with tempfile.TemporaryDirectory() as folder:

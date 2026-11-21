@@ -325,6 +325,12 @@ def table(parent, columns, height=6):
 
 
 def dialog(root, title, width, height):
+    """建一个居中的应用内弹窗，并保证它不会把主界面锁死。
+
+    弹窗是 transient 的：主窗口最小化时 Windows 会把它一起藏起来，可抓取还留在它
+    身上，于是主界面看起来「点不动、也关不掉」。所以窗口不可见时先放开抓取，重新
+    显示时再拿回来。
+    """
     win = tk.Toplevel(root, bg=appearance.token("bg", theme_color(BG)))
     win.withdraw()
     win.title(tr(title))
@@ -337,8 +343,34 @@ def dialog(root, title, width, height):
     win.columnconfigure(0, weight=1)
     win.rowconfigure(0, weight=1)
     win.deiconify()
+    win.lift()
     win.grab_set()
     win.bind("<Escape>", lambda _e: win.destroy())
+    win.protocol("WM_DELETE_WINDOW", win.destroy)
+
+    def holds_grab():
+        try:
+            current = root.grab_current()
+        except tk.TclError:
+            return False
+        return current is None or str(current) == str(win)
+
+    def release(_event=None):
+        try:
+            win.grab_release()
+        except tk.TclError:
+            pass
+
+    def retake(_event=None):
+        # 已有别的弹窗在用时不要抢：它的抓取应该继续有效。
+        if holds_grab() and win.winfo_viewable():
+            try:
+                win.grab_set()
+            except tk.TclError:
+                pass
+
+    win.bind("<Unmap>", release, add="+")
+    win.bind("<Map>", retake, add="+")
     return win
 
 

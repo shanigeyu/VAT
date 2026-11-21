@@ -265,12 +265,19 @@ class JobControlTests(unittest.TestCase):
                                  if isinstance(w, tk.Button) and w.cget("text") == "中断并保存").invoke()
                         deadline = time.monotonic() + 3
                         while studio.active_job is not None and time.monotonic() < deadline:
-                            root.update()
+                            try:
+                                root.update()
+                            except tk.TclError:
+                                break  # 关窗路径会把 Tk 应用销毁，这是预期行为
                             time.sleep(.01)
                         self.assertIsNone(studio.active_job)
                         cancelled.assert_called_once()
                         done.assert_not_called()
                         error.assert_not_called()
+                        if close_app:
+                            # 关窗必须真的销毁窗口，而不是把进程留在后台。
+                            with self.assertRaises(tk.TclError):
+                                root.winfo_exists()
                     self.assertEqual(Store(folder).projects()[0]["approved"], "保留手工文案。")
                 finally:
                     try:
@@ -279,3 +286,67 @@ class JobControlTests(unittest.TestCase):
                     except tk.TclError:
                         pass
                     gc.collect()
+
+    def test_close_finishes_even_when_the_job_ignores_cancellation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            try:
+                root = tk.Tk()
+            except tk.TclError as error:
+                self.skipTest(str(error))
+            root.withdraw()
+            studio = Studio(root, Store(folder))
+            started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
+            def work(report):
+                started.set()
+                release.wait(20)  # 完全不看中断标记，模拟卡在外部进程或网络上的任务
+                finished.set()
+
+            try:
+                studio.job("卡住的任务", work, Mock())
+                self.assertTrue(started.wait(2))
+                studio.close()
+                deadline = time.monotonic() + 8
+                destroyed = False
+                while time.monotonic() < deadline and not destroyed:
+                    try:
+                        root.update()
+                        destroyed = not root.winfo_exists()
+                    except tk.TclError:
+                        destroyed = True
+                        break
+                    time.sleep(.02)
+                self.assertTrue(destroyed, "任务不响应中断时，关窗也必须把窗口销毁")
+            finally:
+                release.set()
+                finished.wait(2)
+                try:
+                    root.after_cancel(studio.timer)
+                    root.destroy()
+                except tk.TclError:
+                    pass
+                gc.collect()
+
+    def test_close_still_exits_when_saving_fails(self):
+        with tempfile.TemporaryDirectory() as folder:
+            try:
+                root = tk.Tk()
+            except tk.TclError as error:
+                self.skipTest(str(error))
+            root.withdraw()
+            store = Store(folder)
+            studio = Studio(root, store)
+            studio.p["title"] = "改过的标题"
+            try:
+                with patch.object(Store, "save", side_effect=RuntimeError("database is locked")):
+                    studio.close()
+                with self.assertRaises(tk.TclError):
+                    root.winfo_exists()
+            finally:
+                try:
+                    root.after_cancel(studio.timer)
+                    root.destroy()
+                except tk.TclError:
+                    pass
+                gc.collect()
+

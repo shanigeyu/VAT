@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parent
 SOURCE_FILES = (
     ".github/workflows/desktop.yml", ".gitignore", "README.md", "使用说明.md", "requirements.txt",
     "LICENSE", "THIRD-PARTY-NOTICES.md", "CHANGELOG.md",
-    "docs/RELEASE-NOTES-v0.1.0.md", "third_party_licenses",
+    "docs/RELEASE-NOTES-v0.1.0.md", "docs/RELEASE-NOTES-v0.1.1.md", "third_party_licenses",
     "vat.spec", "make_source_zip.py", "make_hashes.py", "studio.ico", "docs/settings.png", "docs/cover.png", "ego_douyin.mjs",
     "api_profiles.py", "api_settings.py", "app_paths.py", "appearance.py", "asset_reading.py",
     "auto_video.py", "auto_video_ui.py", "codex_harness.py", "covers.py", "creative_art.py", "desktop.py",
