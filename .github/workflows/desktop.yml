@@ -1,0 +1,41 @@
+name: Desktop tests and builds
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-22.04]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-noto-cjk xvfb xauth
+      - if: runner.os == 'macOS'
+        run: command -v ffmpeg || brew install ffmpeg
+      - if: runner.os == 'Windows'
+        shell: pwsh
+        run: if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { choco install ffmpeg -y --no-progress }
+      - run: python -m pip install -r requirements.txt pyinstaller==6.22.3
+      - if: runner.os != 'Linux'
+        run: python -m unittest discover -s tests
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a python -m unittest discover -s tests
+      - run: python -m PyInstaller --noconfirm vat.spec
+      - if: runner.os == 'macOS'
+        run: ditto -c -k --keepParent dist/VAT.app dist/VAT-macOS.zip
+      - if: runner.os == 'Linux'
+        run: tar -czf dist/VAT-Linux.tar.gz -C dist VAT
+      - uses: actions/upload-artifact@v4
+        with:
+          name: VAT-${{ runner.os }}-${{ runner.arch }}
+          if-no-files-found: error
+          path: |
+            dist/VAT.exe
+            dist/VAT-macOS.zip
+            dist/VAT-Linux.tar.gz
