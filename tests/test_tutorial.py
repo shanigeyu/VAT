@@ -43,7 +43,7 @@ class TutorialTests(unittest.TestCase):
 
     def captions(self, parent):
         shown = [widget.cget("text") for widget in self.widgets(parent, tk.Label)]
-        shown += [widget.cget("text") for widget in self.widgets(parent, tk.Button)]
+        shown += [widget.cget("text") for widget in self.widgets(parent, (tk.Button, SoftButton))]
         return shown
 
     def test_welcome_shows_the_tutorial_before_the_notice(self):

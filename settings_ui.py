@@ -93,7 +93,7 @@ class SettingsPages:
         cards.pack(fill="x", pady=(7, 16))
         accent = self.prefs.get("accent", "jade")
         for i, (key, title) in enumerate(appearance.THEMES.items()):
-            selected = self.prefs.get("theme", "modern") == key
+            selected = self.prefs.get("theme", appearance.DEFAULT_THEME) == key
             palette = appearance.palette(key, accent)
             cards.columnconfigure(i, weight=1, uniform="preview")
             outline = palette["primary"] if selected else appearance.current["line"]

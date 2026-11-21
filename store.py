@@ -25,7 +25,7 @@ DEFAULTS = {
     "engine": "", "codex_path": "", "codex_model": "", "api_profile": "",
     "harness": "", "harness_model": "", "style": "", "voice": "", "sovits_profile": "",
     "speech_backend": "local", "speech_api": {}, "speech_llm": {},
-    "theme": "modern", "accent": "jade", "language": "zh_CN", "source_dir": "",
+    "theme": "aurora", "accent": "jade", "language": "zh_CN", "source_dir": "",
     "tutorial": "show",
 }
 SAVE_PROJECT = "INSERT INTO projects VALUES (?,?) ON CONFLICT(id) DO UPDATE SET data=excluded.data"
@@ -120,6 +120,11 @@ class Store:
                 conn.execute("INSERT OR IGNORE INTO prefs VALUES('theme', ?)", (json.dumps("classic"),))
             else:
                 conn.execute("INSERT OR IGNORE INTO prefs VALUES('theme', ?)", (json.dumps(DEFAULTS["theme"]),))
+            # v0.2.2：旧默认「简约工作台」一次性换成新的默认主题；之后用户再选什么都保留。
+            if not conn.execute("SELECT 1 FROM prefs WHERE key='theme_default_v022'").fetchone():
+                conn.execute("UPDATE prefs SET data=? WHERE key='theme' AND data=?",
+                             (json.dumps(DEFAULTS["theme"]), json.dumps("modern")))
+                conn.execute("INSERT INTO prefs VALUES('theme_default_v022', ?)", (json.dumps(True),))
             if not conn.execute("SELECT 1 FROM api_profiles LIMIT 1").fetchone():
                 legacy = {k: json.loads(v) for k, v in conn.execute(
                     "SELECT key, data FROM prefs WHERE key IN ('base','model')")}

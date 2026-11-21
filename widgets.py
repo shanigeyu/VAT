@@ -181,6 +181,11 @@ class SoftButton(tk.Canvas):
         if self._state == "normal" and self._command:
             self._command()
 
+    def invoke(self):
+        """与 tk.Button.invoke 一致：可用时执行命令并返回其结果。"""
+        if self._state == "normal" and self._command:
+            return self._command()
+
     def configure(self, cnf=None, **kw):
         kw = dict(cnf or {}, **kw)
         if "text" in kw:
@@ -393,7 +398,7 @@ def init_style(root):
         primary = appearance.token("primary", GREEN)
         st.configure("Studio.Treeview", background=surface, fieldbackground=surface, foreground=ink,
                      borderwidth=0, relief="flat", rowheight=pixels(root, 34), font=(FONT, 10),
-                     lightcolor=surface, darkcolor=surface)
+                     lightcolor=surface, darkcolor=surface, bordercolor=surface)
         st.configure("Studio.Treeview.Heading", background=paper, foreground=dim, relief="flat",
                      padding=(10, 10), borderwidth=0, font=(FONT, 9))
         st.map("Studio.Treeview", background=[("selected", appearance.token("tint", "#d8eddf"))],

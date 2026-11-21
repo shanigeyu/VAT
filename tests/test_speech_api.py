@@ -19,6 +19,7 @@ import speech_api
 from api_profiles import protect_key
 from store import Store, new_project, shots_from_plan
 from studio import Studio
+from widgets import SoftButton
 
 
 def example_wav(rate, milliseconds, *, streaming=False):
@@ -265,7 +266,7 @@ class SpeechAPITests(unittest.TestCase):
         model.delete(0, "end")
         model.insert(0, "new-tts")
         next(w for w in self.widgets(dialog)
-             if isinstance(w, tk.Button) and w.cget("text") == "保存设置").invoke()
+             if isinstance(w, (tk.Button, SoftButton)) and w.cget("text") == "保存设置").invoke()
         studio.save_now()
         saved = Store(self.root).prefs()
         self.assertEqual(saved["speech_backend"], "api")

@@ -20,6 +20,18 @@ class UserStorageTests(unittest.TestCase):
         self.enterContext(patch("app_paths.default_data_home", return_value=self.root / "default"))
         self.enterContext(patch.dict(os.environ, {"FENJING_HOME": ""}))
 
+    def test_old_default_theme_moves_to_the_new_default_once(self):
+        import sqlite3
+        from contextlib import closing
+        store = Store()
+        self.assertEqual(store.prefs()["theme"], "aurora")
+        store.set_pref("theme", "modern")
+        with closing(sqlite3.connect(store.db)) as conn, conn:
+            conn.execute("DELETE FROM prefs WHERE key='theme_default_v022'")
+        self.assertEqual(Store().prefs()["theme"], "aurora")
+        store.set_pref("theme", "modern")
+        self.assertEqual(Store().prefs()["theme"], "modern")
+
     def test_switch_workspace_open_original_and_override(self):
         first = Store()
         first.save(new_project("Original"))

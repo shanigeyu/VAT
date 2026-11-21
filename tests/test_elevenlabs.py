@@ -17,6 +17,7 @@ import speech_api
 from api_profiles import protect_key
 from store import Store, new_project, shots_from_plan
 from studio import Studio
+from widgets import SoftButton
 
 
 def example_wav(milliseconds):
@@ -164,7 +165,7 @@ class ElevenLabsTests(unittest.TestCase):
             self.control(dialog, "音色", tk.Entry).insert(0, "my-voice-01")
             self.control(dialog, "API 密钥", tk.Entry).insert(0, "native-service-key")
             save = lambda parent: next(widget for widget in self.widgets(parent)
-                                      if isinstance(widget, tk.Button) and widget.cget("text") == "保存设置").invoke()
+                                      if isinstance(widget, (tk.Button, SoftButton)) and widget.cget("text") == "保存设置").invoke()
             save(dialog)
             studio.save_now()
             saved = speech_api.Profile(**Store(self.root).prefs()["speech_api"])

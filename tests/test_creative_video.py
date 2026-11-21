@@ -21,6 +21,7 @@ import review
 from creative_art import Artwork
 from store import Store
 from studio import Studio
+from widgets import SoftButton
 
 
 SVG = """<svg viewBox="0 0 72 128" xmlns="http://www.w3.org/2000/svg">
@@ -61,7 +62,7 @@ class CreativeVideoTests(unittest.TestCase):
                 gateway.event_generate("<<ComboboxSelected>>")
                 window.update()
                 model.set(model_id)
-                next(w for w in walk(dialog) if isinstance(w, tk.Button) and w.cget("text") == "保存").invoke()
+                next(w for w in walk(dialog) if isinstance(w, (tk.Button, SoftButton)) and w.cget("text") == "保存").invoke()
             direction, = [w for w in walk(studio.body) if isinstance(w, tk.Text)]
             direction.insert("1.0", "用一镜到底的剪纸动画。")
             selector = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox)
@@ -72,7 +73,7 @@ class CreativeVideoTests(unittest.TestCase):
                              and "高度参考" in w.cget("values"))
             self.assertEqual(reference.get(), "平衡参考")
             reference.set("高度参考")
-            start = next(w for w in walk(studio.body) if isinstance(w, tk.Button) and w.cget("text") == "开始制作")
+            start = next(w for w in walk(studio.body) if isinstance(w, (tk.Button, SoftButton)) and w.cget("text") == "开始制作")
             duration = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox) and "15 秒" in w.cget("values"))
             ratio = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox) and "方形 1∶1" in w.cget("values"))
             duration.set("14 秒")
@@ -113,7 +114,7 @@ class CreativeVideoTests(unittest.TestCase):
             ratio = next(w for w in walk(studio.body) if isinstance(w, ttk.Combobox) and "方形 1∶1" in w.cget("values"))
             self.assertEqual(ratio.get(), "方形 1∶1")
             ratio.set("横屏 16∶9")
-            resume = next(w for w in walk(studio.body) if isinstance(w, tk.Button) and w.cget("text") == "继续制作")
+            resume = next(w for w in walk(studio.body) if isinstance(w, (tk.Button, SoftButton)) and w.cget("text") == "继续制作")
             with patch.object(studio, "job") as create_job:
                 resume.invoke()
                 create_job.assert_called_once()
@@ -129,7 +130,7 @@ class CreativeVideoTests(unittest.TestCase):
                              and "高度参考" in w.cget("values"))
             self.assertEqual(reference.get(), "自主创作")
             reference.set("高度参考")
-            resume = next(w for w in walk(studio.body) if isinstance(w, tk.Button) and w.cget("text") == "继续制作")
+            resume = next(w for w in walk(studio.body) if isinstance(w, (tk.Button, SoftButton)) and w.cget("text") == "继续制作")
             with patch.object(studio, "job") as create_job:
                 resume.invoke()
                 create_job.assert_called_once()

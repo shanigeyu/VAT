@@ -18,6 +18,7 @@ from api_profiles import ANTHROPIC
 from auto_video import new_job
 from store import Store
 from studio import Studio
+from widgets import SoftButton
 
 
 class CodexImageTests(unittest.TestCase):
@@ -144,10 +145,10 @@ class CodexImageTests(unittest.TestCase):
         route.current(choices.index("Codex CLI"))
         route.event_generate("<<ComboboxSelected>>")
         model.set("image-agent")
-        next(w for w in self.widgets(dialog) if isinstance(w, tk.Button) and w.cget("text") == "保存").invoke()
+        next(w for w in self.widgets(dialog) if isinstance(w, (tk.Button, SoftButton)) and w.cget("text") == "保存").invoke()
         self.assertEqual(Store(self.root).prefs()["auto_model.images"], {"engine": "Codex", "model": "image-agent"})
         self.assertIn("Codex CLI", control.cget("text"))
-        start = next(w for w in self.widgets(studio.body) if isinstance(w, tk.Button) and w.cget("text") == "开始制作")
+        start = next(w for w in self.widgets(studio.body) if isinstance(w, (tk.Button, SoftButton)) and w.cget("text") == "开始制作")
         with patch.object(studio, "job") as job, patch.object(store, "profile_key", return_value=""):
             start.invoke()
             job.assert_called_once()

@@ -137,7 +137,7 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
         root.geometry(f"{w}x{h}+{max(0,(sw-w)//2)}+{max(0,(sh-h)//2-18)}")
         root.minsize(min(pixels(root,890),w), min(pixels(root,580),h))
         self.build_shell()
-        self.go("topics")
+        self.go("auto_video")
         root.protocol("WM_DELETE_WINDOW", self.close)
         root.bind("<Control-s>", lambda _e: self.save_now())
         if root.tk.call("tk", "windowingsystem") == "aqua":
@@ -169,6 +169,10 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
         else:
             button(top, "新建一期", self.create_project, "plain").pack(side="left", padx=8)
             button(top, "重命名", self.rename_project, "plain").pack(side="right", padx=16)
+        if soft:
+            # 顶栏右侧的版本标识：浅色重点底，和侧栏选中态呼应。
+            tk.Label(top, text=release.version(), bg=appearance.token("tint"), fg=appearance.token("primary"),
+                     font=(widgets.FONT, 9, "bold"), padx=10, pady=3, bd=0).pack(side="right", padx=28, pady=(18, 0))
         frame(self.main, appearance.token("hairline", LINE) if soft else LINE, height=1).pack(fill="x")
         footer = frame(self.main, "#eaf0e8")
         footer.pack(side="bottom", fill="x")
@@ -453,10 +457,10 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
             w.destroy()
         theme = appearance.current
         soft = appearance.token("rounded", False)
-        modern = self.prefs.get("theme", "modern") != "classic"
+        modern = self.prefs.get("theme", appearance.DEFAULT_THEME) != "classic"
         brand = frame(self.rail)
         brand.pack(fill="x", padx=18 if soft else 17, pady=(24, 20) if soft else ((20, 18) if modern else (25, 26)))
-        glyph(brand, "brand", theme["primary"] if modern else theme["active_text"], theme["rail"], 32).pack(side="left", padx=(0, 8))
+        glyph(brand, "brand", theme.get("rail_accent", theme["primary"]) if modern else theme["active_text"], theme["rail"], 32).pack(side="left", padx=(0, 8))
         wordmark=frame(brand)
         wordmark.pack(side="left")
         label(wordmark, "VAT", 17, theme["rail_title"], True).pack(anchor="w")
@@ -488,7 +492,7 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
             row.pack(side="bottom" if bottom else "top", fill="x",
                      padx=12 if soft else 10, pady=(3, 18 if soft else 16) if bottom else ((3, 3) if soft else (2, 2)))
             if modern:
-                indicator = frame(row, theme["primary"] if active else bg, width=pixels(row, 3))
+                indicator = frame(row, theme.get("rail_accent", theme["primary"]) if active else bg, width=pixels(row, 3))
                 indicator.pack(side="left", fill="y", pady=6 if soft else 4)
                 indicator.bind("<Button-1>", lambda _: self.go(key))
             row.bind("<Return>", lambda _: self.go(key))

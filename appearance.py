@@ -1,6 +1,7 @@
 ﻿"""Presentation preferences for the desktop UI. Stored project values stay canonical."""
 
-THEMES = {"soft": "柔和纸白", "modern": "简约工作台", "classic": "经典工作台"}
+DEFAULT_THEME = "aurora"
+THEMES = {"aurora": "深栏晨光", "soft": "柔和纸白", "modern": "简约工作台", "classic": "经典工作台"}
 ACCENTS = {"jade": ("松绿", "#19694f", "#e2f0e8", "#18342e"),
            "blue": ("靛蓝", "#3659a6", "#e7eefb", "#222d4c"),
            "violet": ("紫藤", "#76429c", "#f1e9f8", "#342642"),
@@ -16,6 +17,21 @@ def mix(left, right, weight):
 
 def palette(theme, accent):
     _, primary, tint, dark = ACCENTS.get(accent, ACCENTS["jade"])
+    if theme == "aurora":
+        # 深墨侧栏 + 冷白工作区 + 圆角白卡；重点色在深色侧栏上提亮，保证对比度。
+        rail = "#141A24"
+        return {
+            "bg": "#F1F3F7", "surface": "#FFFFFF", "card": "#FFFFFF", "field": "#F3F5F9",
+            "line": "#DFE3EA", "hairline": "#E9ECF2",
+            "ink": "#1A2130", "dim": "#5C6677", "faint": "#99A1AF",
+            "primary": primary, "hover": mix(primary, "#000000", .18),
+            "tint": mix(primary, "#ffffff", .88), "soft": "#ECEFF4",
+            "rail": rail, "rail_text": "#C3CAD6", "rail_title": "#FFFFFF", "rail_dim": "#717C8E",
+            "rail_accent": mix(primary, "#ffffff", .42),
+            "active": mix(rail, primary, .34), "active_text": "#FFFFFF",
+            "shadow": "#E2E6ED", "chrome": rail, "chrome_text": "#E6EAF0",
+            "radius": 14, "radius_sm": 9, "rounded": True,
+        }
     if theme == "soft":
         # 纸白底、低对比细线、松绿只做重点；卡片圆角由 widgets 读取 radius 绘制。
         return {
@@ -50,7 +66,7 @@ def palette(theme, accent):
     }
 
 
-current = palette("soft", "jade")
+current = palette(DEFAULT_THEME, "jade")
 language = "zh_CN"
 
 

@@ -18,6 +18,7 @@ import render_progress
 import task_control
 from store import Store, new_project, shots_from_plan
 from studio import Studio
+from widgets import SoftButton
 
 
 PLAN = {"title": "保存步骤", "angle": "完成后继续", "seconds": 2, "style": "简约图解",
@@ -262,7 +263,7 @@ class JobControlTests(unittest.TestCase):
                             studio.close()
                         else:
                             next(w for w in walk(studio.active_job)
-                                 if isinstance(w, tk.Button) and w.cget("text") == "中断并保存").invoke()
+                                 if isinstance(w, (tk.Button, SoftButton)) and w.cget("text") == "中断并保存").invoke()
                         deadline = time.monotonic() + 3
                         while studio.active_job is not None and time.monotonic() < deadline:
                             try:
