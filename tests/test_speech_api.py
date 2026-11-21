@@ -173,6 +173,28 @@ class SpeechAPITests(unittest.TestCase):
             self.assertIn("audio", body["modalities"])
             self.assertIn(text, json.dumps(body["messages"], ensure_ascii=False))
 
+    def test_voice_direction_reaches_speech_requests_and_separates_the_cache(self):
+        for text in ("第一句。", "第二句。"):
+            self.replies[text] = (200, example_wav(24000, 120))
+        plain = self.profile
+        moody = replace(self.profile, direction="  开头惊讶，\n结尾坚定  ")
+        production.export_voice(self.root, self.project, self.report, voice_profile=plain)
+        production.export_voice(self.root, self.project, self.report, voice_profile=plain)
+        self.assertEqual(len(self.sent), 2)
+        self.assertTrue(all("instructions" not in body for _, _, body in self.sent))
+        production.export_voice(self.root, self.project, self.report, voice_profile=moody)
+        self.assertEqual(len(self.sent), 4)
+        self.assertEqual({body["instructions"] for _, _, body in self.sent[2:]}, {"开头惊讶， 结尾坚定"})
+
+        audio_model = speech_api.AudioModel(self.profile.endpoint, "gpt-audio", "alloy", direction="温柔")
+        wav = base64.b64encode(example_wav(24000, 120)).decode("ascii")
+        self.audio_model_replies["gpt-audio"] = (200, json.dumps(
+            {"choices": [{"message": {"audio": {"data": wav}}}]}).encode())
+        production.export_voice(self.root, self.project, self.report, voice_profile=audio_model)
+        prompt = self.sent[-1][2]["messages"][0]["content"]
+        self.assertIn("语气与情感：温柔", prompt)
+        self.assertTrue(prompt.endswith("第二句。"))
+
     def test_audio_model_rejects_a_text_only_response(self):
         voice = speech_api.AudioModel(self.profile.endpoint, "text-only", "alloy")
         payload = {"choices": [{"message": {"content": "收到。"}}]}

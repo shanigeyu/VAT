@@ -1,5 +1,7 @@
 import math
+import queue
 import tempfile
+import threading
 import tkinter as tk
 import webbrowser
 from copy import deepcopy
@@ -8,11 +10,14 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from urllib.parse import urlsplit
 
+import ai_chat
 import discovery
+import generated_images
 import planning
 import production
 import providers
 import script_timing
+import shot_preview
 import sovits
 import speech_api
 import talk_import
@@ -20,6 +25,9 @@ from api_profiles import api_key, protect_key
 from store import LIBRARIES, SHOT_SLOTS, confirmed, eligible, library_extensions, library_owner, new_project, script_units, shot_clips, shots_from_plan, uid
 from ui_language import Choice, tr
 import appearance
+import step_models
+from PIL import Image, ImageOps, ImageTk
+from shot_chat import apply_chat as planning_apply_chat
 from widgets import DIM, GREEN, WHITE, action_row, bind_context_menu, box, button, dialog, editor, entry_row, field, frame, label, pixels, read, scroll_page, selected, table
 
 
@@ -229,11 +237,20 @@ class WorkflowPages:
         button(row,"按句拆镜",lambda:make(False)).pack(side="left")
         label(row,f"{len(sections)} 段  /  {len(self.p['shots'])} 镜",9,DIM).pack(side="right")
         assets=self.store.assets(self.p["id"])
-        holder,tv=table(self.body,[("text","定稿台词",148,True),("visual","画面说明",148,True),("ref","引用素材",108,True)])
+        bar=action_row(self.body)
+        bar.pack_forget()
+        bar.pack(side="bottom",fill="x",pady=(10,0))
+        work=frame(self.body)
+        work.pack(fill="both",expand=True)
+        work.columnconfigure(0,weight=1)
+        work.rowconfigure(0,weight=1)
+        holder,tv=table(work,[("text","定稿台词",148,True),("visual","画面说明",148,True),("ref","引用素材",108,True)])
         tv.configure(show="tree headings")
         tv.heading("#0",text=tr("段落 / 镜头"),anchor="w")
         tv.column("#0",width=pixels(tv,160),minwidth=100,stretch=False)
-        holder.pack(fill="both",expand=True)
+        holder.grid(row=0,column=0,sticky="nsew")
+        side_card,side=box(work)
+        side_card.grid(row=0,column=1,sticky="nsew",padx=(10,0))
         start=0
         for si,sec in enumerate(sections):
             grp=f"section-{si}"
@@ -275,11 +292,212 @@ class WorkflowPages:
                 self.status.set(tr(f"已匹配 {len(changes)} 个素材位置，空缺的配音镜头将在合成时自动配图"))
             self.job("按镜头匹配可用素材", match, done)
         tv.bind("<Double-1>",lambda e:edit() if tv.identify_row(e.y) and not tv.identify_element(e.x,e.y).endswith("indicator") else None)
-        bar=action_row(self.body)
         button(bar,"编辑镜头",edit).pack(side="left")
         button(bar,"AI 为镜头选材",choose).pack(side="left",padx=5)
-        button(bar,"打开素材库",lambda:self.go("assets"),"plain").pack(side="left")
+        button(bar,"分镜画面总览",lambda:self.shot_gallery(assets)).pack(side="left")
+        button(bar,"打开素材库",lambda:self.go("assets"),"plain").pack(side="left",padx=5)
         button(bar,"去音频制作 →",lambda:self.go("audio"),"primary").pack(side="right")
+
+        # 右侧：所选镜头的画面预览，可以直接改这一镜。
+        box_w,box_h=pixels(self.root,210),pixels(self.root,236)
+        label(side,"镜头画面",12,bold=True).pack(anchor="w")
+        caption=tk.StringVar(side,value="")
+        label(side,"",9,DIM,localize=False,textvariable=caption,wraplength=box_w,justify="left").pack(anchor="w",pady=(3,6))
+        stage=tk.Frame(side,bg="#171a21",width=box_w,height=box_h)
+        stage.pack()
+        stage.pack_propagate(False)
+        picture=tk.Label(stage,bg="#171a21",bd=0,fg="#9aa4b4",font=("Microsoft YaHei UI",9),wraplength=box_w-20)
+        picture.pack(fill="both",expand=True)
+        picture.photo=None
+        side_actions=frame(side)
+        side_actions.pack(fill="x",pady=(8,0))
+        focus={"index":None}
+
+        def current_index():
+            if focus["index"] is None:
+                raise ValueError("请先在左侧选择一个镜头。")
+            return focus["index"]
+
+        def edit_this():
+            if not confirmed(self.p):
+                raise ValueError("请先确认当前文案。")
+            self.shot_dialog(current_index())
+
+        def chat_this():
+            index=current_index()
+            self.open_shot_chat(assets,f"第 {index+1} 镜：")
+
+        def place(image,index):
+            if not picture.winfo_exists() or focus["index"]!=index:
+                return
+            view=ImageOps.contain(image,(box_w,box_h),Image.Resampling.LANCZOS)
+            picture.photo=ImageTk.PhotoImage(view)
+            picture.configure(image=picture.photo,text="")
+
+        def select_shot(_event=None):
+            value=tv.focus() or (tv.selection() or ("",))[0]
+            if not value.isdigit():
+                return
+            index=int(value)
+            if index==focus["index"]:
+                return
+            focus["index"]=index
+            self.shot_focus=index
+            s=self.p["shots"][index]
+            layers=shot_preview.describe(self.p,assets,s) or tr("待配画面，合成时自动配图")
+            caption.set(tr(f"镜头 {index+1:02d} · ")+layers)
+            picture.photo=None
+            picture.configure(image="",text=tr("正在生成画面预览…"))
+            self.shot_still_async(assets,index,lambda image:place(image,index))
+
+        tv.bind("<<TreeviewSelect>>",select_shot,add="+")
+        button(side_actions,"编辑此镜",edit_this,"primary").pack(side="left")
+        button(side_actions,"AI 修改此镜",chat_this).pack(side="left",padx=5)
+        if self.p["shots"]:
+            first=str(min(getattr(self,"shot_focus",0) or 0,len(self.p["shots"])-1))
+            if tv.exists(first):
+                tv.see(first)
+                tv.selection_set(first)
+                tv.focus(first)
+                select_shot()
+        else:
+            caption.set(tr("拆镜后，这里显示所选镜头的画面。"))
+            picture.configure(text=tr("暂无镜头"))
+        self.chat_button("shots",self.shot_chat_context,lambda changes,win:self.apply_shot_chat(changes,win,assets))
+
+    def shot_chat_context(self):
+        units=script_units(self.p["approved"])
+        assets=self.store.assets(self.p["id"])
+        rows=[]
+        for i,s in enumerate(self.p["shots"]):
+            art=s.get("art") or {}
+            rows.append({"镜头":i+1,"类型":"真人出镜" if s["kind"]=="talk" else "素材画面",
+                         "台词":"".join(units[s["start"]:s["end"]]),"画面说明":s["visual"],
+                         "已用素材":planning.reference_names(assets,s),
+                         "原创画面":"、".join(name for name,k in (("SVG 动效","svg"),("AI 生图","image_file"),
+                                                                 ("生图提示词","image_prompt")) if art.get(k))})
+        return {"画幅":self.p["orientation"],"分段":[sec["title"] for sec in self.p["sections"]],"镜头":rows}
+
+    def open_shot_chat(self,assets,initial=""):
+        if not self.p["shots"]:
+            raise ValueError("请先定稿并拆镜。")
+        ai_chat.open_chat(self,"shots",self.shot_chat_context,
+                          lambda changes,win:self.apply_shot_chat(changes,win,assets),initial=initial)
+
+    def apply_shot_chat(self,changes,win,assets):
+        pending,skipped=planning_apply_chat(self.p,changes)
+        self.store.save(self.p)
+        note=tr("已按对话修改 {} 个镜头").format(len(changes.get("shots",[])))
+        if skipped:
+            note+=tr("；第 {} 镜已有主体素材，未改用生图").format("、".join(map(str,skipped)))
+        if not pending:
+            self.status.set(note)
+            self.go("shots")
+            return
+        selection=self.prefs.get(step_models.PREF_PREFIX+"images") or self.prefs.get(step_models.PREF_PREFIX+"cover")
+        try:
+            if not selection:
+                raise ValueError
+            prefs,key=self.engine("images",selection=selection)
+            if prefs["engine"]=="API" and prefs.get("protocol") not in generated_images.PROTOCOLS:
+                raise ValueError
+        except ValueError:
+            self.status.set(note+tr("。生图提示词已保存，选好生图模型后再让 AI 生成画面"))
+            self.go("shots")
+            return
+        p=deepcopy(self.p)
+        def work(report):
+            files={}
+            for n,index in enumerate(pending,1):
+                report(f"正在生成第 {index+1} 镜的画面（{n}/{len(pending)}）")
+                files[index]=generated_images.create(self.store.root,p,p["shots"][index]["art"]["image_prompt"],prefs,key)
+            return files
+        def done(files):
+            for index,name in files.items():
+                self.p["shots"][index].setdefault("art",{})["image_file"]=name
+            self.store.save(self.p)
+            self.status.set(note+tr("，并生成了 {} 张画面").format(len(files)))
+            self.go("shots")
+        self.job("AI 生成镜头画面",work,done,win if win.winfo_exists() else None)
+
+    def shot_still_async(self,assets,index,callback):
+        """Render a shot still off the UI thread; repeated requests reuse the cached picture."""
+        cache=self.__dict__.setdefault("shot_stills",{})
+        sig=shot_preview.signature(self.p,assets,index)
+        if sig in cache:
+            callback(cache[sig])
+            return
+        p=deepcopy(self.p)
+        result=queue.Queue()
+        root=self.store.root
+        def run():
+            try:
+                image=shot_preview.shot_still(root,p,assets,index)
+            except Exception:
+                image=shot_preview.placeholder(shot_preview.preview_size(p.get("orientation","")),index+1,
+                                               p["shots"][index].get("visual",""),"预览失败").convert("RGB")
+            result.put(image)
+        threading.Thread(target=run,daemon=True).start()
+        def poll():
+            try:
+                image=result.get_nowait()
+            except queue.Empty:
+                self.root.after(90,poll)
+                return
+            if len(cache)>240:
+                cache.clear()
+            cache[sig]=image
+            try:
+                callback(image)
+            except tk.TclError:
+                pass
+        self.root.after(90,poll)
+
+    def shot_gallery(self,assets):
+        if not self.p["shots"]:
+            raise ValueError("请先定稿并拆镜。")
+        win=dialog(self.root,"分镜画面总览",900,640)
+        top=frame(win)
+        top.pack(fill="x",padx=18,pady=(14,6))
+        label(top,"分镜画面总览",14,bold=True).pack(side="left")
+        label(top,"点任一画面可单独修改这一镜。视频取入点处的一帧，原创动效取中段。",9,DIM).pack(side="left",padx=12)
+        button(top,"关闭",win.destroy,"plain").pack(side="right")
+        holder=frame(win)
+        holder.pack(fill="both",expand=True,padx=12,pady=(0,12))
+        inner=scroll_page(holder)
+        upright=not self.p["orientation"].startswith("横")
+        columns=6 if upright else 4
+        cell_w=pixels(self.root,124 if upright else 196)
+        cell_h=pixels(self.root,214 if upright else 112)
+        units=script_units(self.p["approved"])
+        def open_shot(index):
+            win.destroy()
+            if confirmed(self.p):
+                self.shot_dialog(index)
+            else:
+                self.open_shot_chat(assets,f"第 {index+1} 镜：")
+        for column in range(columns):
+            inner.columnconfigure(column,weight=1,uniform="gallery")
+        for i,s in enumerate(self.p["shots"]):
+            cell=frame(inner)
+            cell.grid(row=i//columns,column=i%columns,padx=5,pady=6,sticky="n")
+            stage=tk.Frame(cell,bg="#171a21",width=cell_w,height=cell_h,cursor="hand2")
+            stage.pack()
+            stage.pack_propagate(False)
+            pic=tk.Label(stage,bg="#171a21",fg="#9aa4b4",bd=0,text=tr("生成中…"),cursor="hand2")
+            pic.pack(fill="both",expand=True)
+            pic.photo=None
+            text="".join(units[s["start"]:s["end"]])
+            label(cell,f"{i+1:02d}  "+(text[:12]+("…" if len(text)>12 else "")),9,DIM,localize=False).pack(anchor="w",pady=(3,0))
+            for widget in (stage,pic):
+                widget.bind("<Button-1>",lambda _e,i=i:open_shot(i))
+            def place(image,pic=pic):
+                if not pic.winfo_exists():
+                    return
+                view=ImageOps.contain(image,(cell_w,cell_h),Image.Resampling.LANCZOS)
+                pic.photo=ImageTk.PhotoImage(view)
+                pic.configure(image=pic.photo,text="")
+            self.shot_still_async(assets,i,place)
 
     def asset_source_actions(self, assets, category, folder_ids=None):
         locations = sorted({Path(asset["path"]).parent for asset in assets
@@ -687,6 +905,14 @@ class WorkflowPages:
 
         backend.bind("<<ComboboxSelected>>", show_voice_input)
         show_voice_input()
+        mood_row = frame(c)
+        mood_row.pack(fill="x", pady=(2, 4))
+        label(mood_row, "配音情感与语气", 10, width=14).pack(side="left")
+        mood = tk.StringVar(mood_row, value=self.p.get("voice_direction", ""))
+        field(mood_row, mood).pack(side="left", fill="x", expand=True)
+        label(c, "语音 API（OpenAI 兼容）和音频大模型会按这段要求调整语气；GPT-SoVITS 与 ElevenLabs 暂不支持。"
+                 "也可以点右上「AI 对话」描述想要的感觉。", 9, DIM, wraplength=pixels(self.root, 560),
+              justify="left").pack(anchor="w")
         ai_gain=volume(c,"AI / 合成文案",sound["ai_gain"])
         human_gain=volume(c,"本人文案",sound["human_gain"])
         holder,tv=table(c,[("n","镜头",55,False),("source","文案声来源",160,False),("text","本镜台词",175,True),("file","声音文件",110,True)],4)
@@ -705,7 +931,7 @@ class WorkflowPages:
         button(action_row(c),"设置本镜声音",edit).pack(side="left")
         def capture():
             self.audio_tab=tabs.index("current")
-            self.p.update(sfx=fx.get(),sfx_volume=mat_gain.get())
+            self.p.update(sfx=fx.get(),sfx_volume=mat_gain.get(),voice_direction=" ".join(mood.get().split()))
             sound.update(clip_audio=clips.get(),background=bg.get(),bg_gain=bg_gain.get(),
                          ai_gain=ai_gain.get(),human_gain=human_gain.get())
             prefs = {}
@@ -733,6 +959,19 @@ class WorkflowPages:
         if self.p["shots"]:
             button(actions, "仅生成定稿配音", self.voice, "plain").pack(side="left")
         button(actions, "配音设置", self.audio_profile_dialog).pack(side="right")
+
+        def chat_context():
+            return {"配音方式": tuple(speech_api.BACKENDS.values())[backend.current()],
+                    "当前情感与语气": mood.get(), "定稿文案": self.p["approved"][:3000],
+                    "说明": "情感指令只对语音 API（OpenAI 兼容）与音频大模型生效。"}
+
+        def chat_apply(changes, _win):
+            if "voice_direction" in changes:
+                mood.set(changes["voice_direction"])
+                self.save_now()
+                self.status.set(tr("已更新配音情感与语气，重新生成文案声后生效"))
+
+        self.chat_button("audio", chat_context, chat_apply)
 
     def talk_import_dialog(self):
         self.save_now()
@@ -873,10 +1112,11 @@ class WorkflowPages:
 
     def current_voice_profile(self):
         backend = self.prefs["speech_backend"]
+        direction = " ".join(str(self.p.get("voice_direction", "") or "").split())
         if backend == "api":
-            return speech_api.Profile(**self.prefs["speech_api"])
+            return replace(speech_api.Profile(**self.prefs["speech_api"]), direction=direction)
         if backend == "llm":
-            return speech_api.AudioModel(**self.prefs["speech_llm"])
+            return replace(speech_api.AudioModel(**self.prefs["speech_llm"]), direction=direction)
         return self.prefs["sovits_profile"]
 
     def audio_profile_dialog(self, *, on_saved=None):

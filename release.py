@@ -3,7 +3,7 @@
 联系方式和授权说明都在这里，改这一处，弹窗、设置里的「关于」和使用说明会一起变。
 """
 
-APP_VERSION = "0.2.2"
+APP_VERSION = "0.3.0"
 AUTHOR = "酪蛋白"
 # 填上仓库地址后，说明里的 GitHub 会变成可点击链接；留空时只显示文字。
 GITHUB_URL = "https://github.com/shanigeyu/VAT"

@@ -93,9 +93,12 @@ def background_prompt(title, label="", style_name=STYLE_NAMES[0]):
             "主体不要占满画面，留出大块干净的深色区域，用来叠加封面标题。")
 
 
-def background_prompts(title, label="", style_name=STYLE_NAMES[0]):
+def background_prompts(title, label="", style_name=STYLE_NAMES[0], direction=""):
     """Three compositions per request so the editor can pick a frame that fits the title."""
     base = background_prompt(title, label, style_name)
+    direction = " ".join(str(direction or "").split())[:1000]
+    if direction:
+        base += f"补充画面要求：{direction}。"
     return [f"{base}构图：{scheme}。" for scheme in SCHEMES]
 
 
@@ -172,9 +175,10 @@ def frame_background(root, project, video, seconds, size_name):
         return keep_background(root, project, frame, size_name)
 
 
-def ai_backgrounds(root, project, settings, key, title, label, style_name, size_name, report=None):
+def ai_backgrounds(root, project, settings, key, title, label, style_name, size_name, report=None, *,
+                   direction=""):
     """Draw the candidate backgrounds; generated files stay in the project's 原创素材."""
-    prompts = background_prompts(title, label, style_name)
+    prompts = background_prompts(title, label, style_name, direction)
     paths, errors = [], []
     for index, prompt in enumerate(prompts, 1):
         if report:

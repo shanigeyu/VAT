@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 from PIL import Image, ImageOps, ImageTk
 
 from desktop import log, open_path, start
+import ai_chat
 import appearance
 import app_paths
 import covers
@@ -520,9 +521,16 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
 
     def header(self, title, subtitle=""):
         soft = appearance.token("rounded", False)
-        label(self.body, title, 21 if soft else 22, INK, True).pack(anchor="w", pady=(0, 2) if soft else 0)
+        self.header_row = frame(self.body)
+        self.header_row.pack(fill="x", pady=(0, 2) if soft else 0)
+        label(self.header_row, title, 21 if soft else 22, INK, True).pack(side="left", anchor="w")
         if subtitle:
             label(self.body, subtitle, 10, DIM).pack(anchor="w", pady=(6, 20) if soft else (4, 14))
+
+    def chat_button(self, page, context, apply, **options):
+        """页面标题右侧的「AI 对话」：直接通过本步骤的模型对话修改当前内容。"""
+        return button(self.header_row, "AI 对话",
+                      lambda: ai_chat.open_chat(self, page, context, apply, **options)).pack(side="right")
 
     def job(self, title, worker, done, parent=None, *, show_elapsed=False, on_progress=None, on_error=None,
             on_cancel=None):
@@ -1130,6 +1138,21 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
         button(bar, "配音设置", self.audio_profile_dialog, "plain").pack(side="left")
         button(bar, "去分镜 →", lambda: self.go("shots"), "plain").pack(side="right")
 
+        def chat_context():
+            return {"草稿": read(draft), "已定稿": self.p["approved"], "我的文案风格": read(style),
+                    "题材": (topic or {}).get("title", self.p["title"]),
+                    "选题资料": ((topic or {}).get("notes") or "")[:6000],
+                    "目标时长（秒）": script_timing.target(self.p, advice)}
+
+        def chat_apply(changes, _win):
+            if "draft" in changes:
+                draft.delete("1.0", "end")
+                draft.insert("1.0", changes["draft"])
+                self.save_now()
+                self.status.set(tr("已按对话替换草稿，确认无误后点「确认定稿」"))
+
+        self.chat_button("script", chat_context, chat_apply)
+
     def engine(self, page, *, selection=None):
         if selection is None:
             selection = self.prefs.get(step_models.PREF_PREFIX + page)
@@ -1556,7 +1579,7 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
 
         line = frame(form)
         line.pack(fill="x", pady=3)
-        label(line, "标题", 9, DIM, width=3).pack(side="left")
+        label(line, "标题", 9, DIM, width=7).pack(side="left")
         title = tk.StringVar(line, value=last.get("title") or self.default_cover_title())
         field(line, title).pack(side="left", fill="x", expand=True)
         label(line, "角标", 9, DIM, width=3).pack(side="left", padx=(10, 0))
@@ -1567,9 +1590,41 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
 
         line = frame(form)
         line.pack(fill="x", pady=3)
-        label(line, "副标题", 9, DIM, width=3).pack(side="left")
+        label(line, "副标题", 9, DIM, width=7).pack(side="left")
         subtitle = tk.StringVar(line, value=last.get("subtitle", ""))
         field(line, subtitle).pack(side="left", fill="x", expand=True)
+
+        line = frame(form)
+        line.pack(fill="x", pady=3)
+        label(line, "画面要求", 9, DIM, width=7).pack(side="left")
+        direction = tk.StringVar(line, value=self.p.get("cover_direction", ""))
+        field(line, direction).pack(side="left", fill="x", expand=True)
+        direction.trace_add("write", lambda *_: self.p.update(cover_direction=" ".join(direction.get().split())))
+
+        engine_line = frame(form)
+        engine_line.pack(fill="x", pady=(6, 0))
+        label(engine_line, "生图模型", 9, DIM, width=7).pack(side="left")
+        engine_text = tk.StringVar(engine_line, value="")
+        label(engine_line, "", 9, localize=False, textvariable=engine_text).pack(side="left", fill="x", expand=True)
+
+        def show_engine():
+            selection = self.ai_selection()
+            try:
+                name = step_models.engine_name(step_models.resolve(self.prefs, selection, self.store))
+            except ValueError:
+                name = tr("API 配置已不可用")
+            engine_text.set(name if selection else tr("未选择，点右侧按钮挑一个生图模型"))
+
+        def save_engine(selection):
+            pref = step_models.PREF_PREFIX + "cover"
+            self.store.set_pref(pref, selection)
+            self.prefs[pref] = selection
+            show_engine()
+
+        button(engine_line, "选择生图模型",
+               lambda: step_models.choose(self, "cover", PAGES["cover"], saved=self.ai_selection() or {},
+                                          on_save=save_engine), "plain").pack(side="right")
+        show_engine()
 
         sources = frame(form)
         sources.pack(fill="x", pady=(8, 0))
@@ -1715,7 +1770,7 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
         def draw_ai():
             prefs, key = self.engine("cover", selection=self.ai_selection())
             if prefs["engine"] == "API" and prefs.get("protocol") not in generated_images.PROTOCOLS:
-                raise ValueError("封面背景要生图模型。请在本页右下角「模型与 Harness」选择 Codex CLI，"
+                raise ValueError("封面背景要生图模型。请点本页「选择生图模型」选择 Codex CLI，"
                                  "或支持生图的 API。")
             subject = title.get().strip() or self.p["title"]
 
@@ -1724,7 +1779,7 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
 
             self.job("绘制封面背景", lambda report: covers.ai_backgrounds(
                 self.store.root, self.p, prefs, key, subject, badge.get().strip(), current_style(),
-                current_size(), report), done)
+                current_size(), report, direction=direction.get()), done)
 
         def take_frame():
             candidates = covers.video_candidates(self.store.root, self.p)
@@ -1776,6 +1831,24 @@ class Studio(SettingsPages, WorkflowPages, AutoVideoPage):
         button(sources, "纯色", use_color).pack(side="left", padx=(5, 0))
         button(actions, "预览", refresh).pack(side="left")
         button(actions, "保存封面", save, "primary").pack(side="left", padx=6)
+
+        def chat_context():
+            return {"标题": title.get(), "副标题": subtitle.get(), "角标": badge.get(), "风格": current_style(),
+                    "可选风格": list(covers.STYLE_NAMES), "画幅": current_size(), "画面要求": direction.get(),
+                    "项目名": self.p["title"], "定稿文案": self.p["approved"][:3000]}
+
+        def chat_apply(changes, _win):
+            for key, variable in (("title", title), ("subtitle", subtitle), ("label", badge),
+                                  ("image_direction", direction)):
+                if key in changes:
+                    variable.set(changes[key])
+            if "style" in changes:
+                style.set(changes["style"])
+                changed()
+            self.status.set(tr("已按对话更新封面设置，可点「AI 生图封面」或「保存封面」"))
+
+        # 封面页的步骤模型是生图模型，对话改用文案步骤的文字模型。
+        self.chat_button("cover", chat_context, chat_apply, engine_page="script", styles=covers.STYLE_NAMES)
 
         if records:
             try:

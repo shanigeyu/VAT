@@ -140,6 +140,9 @@ def speech_files(root, units, temp, report, *, voice_profile=""):
             protocol = "openai-speech-v1"
             source = "语音 API"
         identity = [protocol, api.endpoint, api.model, api.voice, api.encrypted_key]
+        direction = speech_api.voice_direction(api)
+        if direction and (isinstance(api, speech_api.AudioModel) or api.provider != "elevenlabs"):
+            identity.append({"direction": direction})
     cache.mkdir(exist_ok=True, parents=True)
     signature = json.dumps(identity, ensure_ascii=False, sort_keys=True)
     paths = [cache / (hashlib.sha256((signature + "\n" + text).encode("utf-8")).hexdigest() + ".wav")
